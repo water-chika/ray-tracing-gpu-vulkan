@@ -4,13 +4,15 @@
 #include <iostream>
 #include <set>
 #include <fstream>
-#include <stb_image_write.h>
+#include <stb/stb_image_write.h>
 #include "shader_path.hpp"
 #include <algorithm>
 #include <numeric>
 
 Vulkan::Vulkan(VulkanSettings settings, Scene scene) :
-        settings(settings), scene(scene), window(nullptr) {
+        settings(settings), scene(scene), window(nullptr),
+        m_width(settings.windowWidth), m_height(settings.windowHeight)
+{
 
     aabbs.reserve(scene.sphereAmount);
     for (int i = 0; i < scene.sphereAmount; i++) {
@@ -124,7 +126,7 @@ void Vulkan::render(const RenderCallInfo& renderCallInfo) {
 
     auto wait_semaphores = std::array{ acquire_image_semaphore };
     auto  wait_stage_masks =
-        std::array<vk::PipelineStageFlags, 1>{ vk::PipelineStageFlagBits::eTransfer };
+        std::array<vk::PipelineStageFlags, 1>{ vk::PipelineStageFlagBits::eAllCommands };
     auto signal_semaphores = std::array{ render_image_semaphore };
     auto submitInfo = vk::SubmitInfo{}
         .setCommandBuffers(commandBuffers[swapChainImageIndex])
@@ -714,11 +716,11 @@ void Vulkan::createCommandBuffer() {
                         vk::AccessFlagBits::eShaderWrite, vk::AccessFlagBits::eTransferRead,
                         vk::ImageLayout::eGeneral, vk::ImageLayout::eTransferSrcOptimal, renderTargetImage.image),
                 getImagePipelineBarrier(
-                        vk::AccessFlagBits::eNoneKHR, vk::AccessFlagBits::eTransferWrite,
+                        vk::AccessFlagBits::eMemoryRead, vk::AccessFlagBits::eTransferWrite,
                         vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, swapChainImage)
         };
 
-        commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eRayTracingShaderKHR, vk::PipelineStageFlagBits::eTransfer,
+        commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eAllCommands, vk::PipelineStageFlagBits::eTransfer,
             vk::DependencyFlagBits::eByRegion, 0, nullptr,
             0, nullptr, 2, imageBarriersToTransfer);
 
@@ -752,7 +754,7 @@ void Vulkan::createCommandBuffer() {
             vk::AccessFlagBits::eTransferWrite, vk::AccessFlagBits::eMemoryRead,
             vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::ePresentSrcKHR, swapChainImage);
 
-        commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eTransfer,
+        commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eAllCommands,
             vk::DependencyFlagBits::eByRegion, 0, nullptr,
             0, nullptr, 1, &barrierSwapChainToPresent);
 
@@ -797,7 +799,7 @@ void Vulkan::createSemaphore() {
         semaphore = device.createSemaphore({});
         });
     m_next_image_semaphores_indices.resize(swapChainImages.size());
-    std::ranges::iota(m_next_image_semaphores_indices, 0);
+    std::iota(m_next_image_semaphores_indices.begin(),m_next_image_semaphores_indices.end(), 0);
     m_next_image_free_semaphore_index = swapChainImages.size();
 
     m_render_image_semaphores.resize(swapChainImages.size());

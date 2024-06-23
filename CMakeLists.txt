@@ -2,15 +2,18 @@ cmake_minimum_required(VERSION 3.20)
 project(RayTracingGPUVulkan)
 
 set(CMAKE_CXX_STANDARD 23)
-set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /SUBSYSTEM:CONSOLE /ENTRY:mainCRTStartup")
+#set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /SUBSYSTEM:CONSOLE /ENTRY:mainCRTStartup")
 
 find_package(Vulkan REQUIRED)
+find_library(glfw glfw)
+find_library(glm glm)
+find_library(stb stb)
 
-add_subdirectory(lib/glfw)
+#add_subdirectory(lib/glfw)
 
 include_directories(
-        lib/glm
-        lib/stb
+	#lib/glm
+	#lib/stb
 )
 
 add_executable(
@@ -25,7 +28,11 @@ add_executable(
         ${CMAKE_CURRENT_BINARY_DIR}/include/shader_path.hpp
 )
 
-target_link_libraries(RayTracingGPUVulkan glfw Vulkan::Vulkan)
+target_link_libraries(RayTracingGPUVulkan
+	glfw
+	Vulkan::Vulkan
+	stb
+	)
 
 function(compile_glsl stage glsl_file spv_file)
 add_custom_command(COMMENT "Compiling ${stage} shader"
@@ -48,6 +55,7 @@ function(compile_glsl_help stage)
     target_sources(RayTracingGPUVulkan PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shaders/shader.${stage} ${CMAKE_CURRENT_BINARY_DIR}/shaders/shader.${stage}.spv)
 endfunction()
 
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/shaders)
 compile_glsl_help(rgen)
 compile_glsl_help(rint)
 compile_glsl_help(rchit)
