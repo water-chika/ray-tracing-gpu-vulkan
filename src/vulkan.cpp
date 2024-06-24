@@ -1299,3 +1299,58 @@ void Vulkan::updateRenderCallInfoBuffer(const RenderCallInfo &renderCallInfo, in
     memcpy(data, &renderCallInfo, sizeof(RenderCallInfo));
     device.unmapMemory(renderCallInfoBuffers[index].memory);
 }
+
+void Vulkan::write_to_file(std::filesystem::path path) {
+    auto width = settings.windowWidth;
+    auto height = settings.windowHeight;
+    vk::BufferCreateInfo bufferCreateInfo = {
+            .size = width*height*4,
+            .usage = vk::BufferUsageFlagBits::eTransferDst,
+            .sharingMode = vk::SharingMode::eExclusive
+    };
+
+    vk::Buffer buffer = device.createBuffer(bufferCreateInfo);
+
+    vk::MemoryRequirements memoryRequirements = device.getBufferMemoryRequirements(buffer);
+
+    vk::MemoryAllocateFlagsInfo allocateFlagsInfo = {
+    };
+
+    vk::MemoryAllocateInfo allocateInfo = {
+            .pNext = &allocateFlagsInfo,
+            .allocationSize = memoryRequirements.size,
+            .memoryTypeIndex = findMemoryTypeIndex(
+                    memoryRequirements.memoryTypeBits,
+                    vk::MemoryPropertyFlagBits::eHostVisible|
+                    vk::MemoryPropertyFlagBits::eHostCoherent)
+    };
+
+    vk::DeviceMemory memory = device.allocateMemory(allocateInfo);
+
+    device.bindBufferMemory(buffer, memory, 0);
+
+    executeSingleTimeCommand(
+        [this, buffer,width,height](vk::CommandBuffer cmd) {
+            auto region = vk::BufferImageCopy{}
+                .setImageSubresource(
+                        vk::ImageSubresourceLayers{}
+                        .setLayerCount(1)
+                        )
+                .setImageExtent(vk::Extent3D{width,height,1})
+            ;
+            cmd.copyImageToBuffer(
+                    renderTargetImage.image,
+                    vk::ImageLayout::ePresentSrcKHR,
+                    buffer,
+                    1,
+                    &region);
+        });
+
+    void* data = device.mapMemory(memory, 0, vk::WholeSize);
+
+    stbi_write_png(path.c_str(), width, height, 4, data, width*4);
+
+    device.freeMemory(memory);
+    device.destroyBuffer(buffer);
+}
+

@@ -69,6 +69,10 @@ int main(int argc, const char** argv) {
     std::cout << "Rendering completed: " << samples << " samples rendered in "
         << renderTime << " ms" << std::endl << std::endl;
 
+    std::cout << "Write to file:" << "render_result.png" << std::endl;
+    vulkan.write_to_file("render_result.png");
+    std::cout << "Write completes." << std::endl;
+
     // WINDOW
     while (!vulkan.shouldExit()) {
         vulkan.update();

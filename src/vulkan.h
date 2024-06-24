@@ -12,6 +12,7 @@
 #include "render_call_info.h"
 
 #include <map>
+#include <filesystem>
 
 struct VulkanImage {
     vk::Image image;
@@ -41,6 +42,8 @@ public:
     void update();
 
     void render(const RenderCallInfo &renderCallInfo);
+
+    void write_to_file(std::filesystem::path path);
 
     [[nodiscard]] bool shouldExit() const;
 
