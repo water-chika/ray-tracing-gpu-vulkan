@@ -1348,7 +1348,7 @@ void Vulkan::write_to_file(std::filesystem::path path) {
 
     void* data = device.mapMemory(memory, 0, vk::WholeSize);
 
-    stbi_write_png(path.c_str(), width, height, 4, data, width*4);
+    stbi_write_png(path.string().c_str(), width, height, 4, data, width*4);
 
     device.freeMemory(memory);
     device.destroyBuffer(buffer);

@@ -5,9 +5,14 @@ set(CMAKE_CXX_STANDARD 23)
 #set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /SUBSYSTEM:CONSOLE /ENTRY:mainCRTStartup")
 
 find_package(Vulkan REQUIRED)
-find_library(glfw glfw)
-find_library(glm glm)
-find_library(stb stb)
+
+if(EXISTS lib/glfw/CMakeLists.txt)
+    add_subdirectory(lib/glfw)
+else()
+    find_library(glfw glfw REQUIRED)
+endif()
+
+
 
 #add_subdirectory(lib/glfw)
 
@@ -31,8 +36,23 @@ add_executable(
 target_link_libraries(RayTracingGPUVulkan
 	glfw
 	Vulkan::Vulkan
-	stb
 	)
+
+if(EXISTS lib/glm/CMakeLists.txt)
+    add_subdirectory(lib/glm)
+    target_link_libraries(RayTracingGPUVulkan glm)
+else()
+    find_library(glm glm REQUIRED)
+endif()
+
+
+if(EXISTS lib/stb/stb_image_write.h)
+    target_include_directories(RayTracingGPUVulkan PUBLIC lib)
+else()
+    find_library(stb stb REQUIRED)
+    target_link_libraries(RayTracingGPUVulkan stb)
+endif()
+
 
 function(compile_glsl stage glsl_file spv_file)
 add_custom_command(COMMENT "Compiling ${stage} shader"
