@@ -49,7 +49,7 @@ function(compile_glsl_help stage)
 	)
     set(
         ${stage}_shader_path
-        "${CMAKE_CURRENT_BINARY_DIR}/shaders/shader.${stage}.spv"
+        "shaders/shader.${stage}.spv"
         PARENT_SCOPE
     )
     target_sources(RayTracingGPUVulkan PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shaders/shader.${stage} ${CMAKE_CURRENT_BINARY_DIR}/shaders/shader.${stage}.spv)
