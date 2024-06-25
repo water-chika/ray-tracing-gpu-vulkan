@@ -32,7 +32,8 @@ if(EXISTS lib/glm/CMakeLists.txt)
     add_subdirectory(lib/glm)
     target_link_libraries(RayTracingGPUVulkan glm)
 else()
-    find_library(glm glm REQUIRED)
+    include(CheckIncludeFileCXX)
+    CHECK_INCLUDE_FILE_CXX(glm/glm.h glm_exist)
 endif()
 
 
