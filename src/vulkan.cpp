@@ -317,7 +317,9 @@ void Vulkan::createLogicalDevice() {
             }
     };
 
-    vk::PhysicalDeviceFeatures deviceFeatures = {};
+    vk::PhysicalDeviceFeatures deviceFeatures = {
+        .shaderFloat64 = true,
+    };
 
     vk::PhysicalDeviceBufferDeviceAddressFeatures bufferDeviceAddressFeatures = {
             .bufferDeviceAddress = true,
@@ -1331,16 +1333,37 @@ void Vulkan::write_to_file(std::filesystem::path path) {
 
     executeSingleTimeCommand(
         [this, buffer,width,height](vk::CommandBuffer cmd) {
+            cmd.pipelineBarrier(vk::PipelineStageFlagBits::eAllCommands,
+                vk::PipelineStageFlagBits::eAllCommands,
+                {},
+                {},
+                {},
+                vk::ImageMemoryBarrier{}
+                .setSrcAccessMask(vk::AccessFlagBits::eMemoryWrite)
+                .setSrcQueueFamilyIndex(computeQueueFamily)
+                .setDstAccessMask(vk::AccessFlagBits::eMemoryRead)
+                .setDstQueueFamilyIndex(computeQueueFamily)
+                .setImage(renderTargetImage.image)
+                .setOldLayout(vk::ImageLayout::eTransferSrcOptimal)
+                .setNewLayout(vk::ImageLayout::eTransferSrcOptimal)
+                .setSubresourceRange(
+                    vk::ImageSubresourceRange{}
+                    .setAspectMask(vk::ImageAspectFlagBits::eColor)
+                    .setLayerCount(1)
+                    .setLevelCount(1)
+                )
+            );
             auto region = vk::BufferImageCopy{}
                 .setImageSubresource(
                         vk::ImageSubresourceLayers{}
+                        .setAspectMask(vk::ImageAspectFlagBits::eColor)
                         .setLayerCount(1)
                         )
                 .setImageExtent(vk::Extent3D{width,height,1})
             ;
             cmd.copyImageToBuffer(
                     renderTargetImage.image,
-                    vk::ImageLayout::ePresentSrcKHR,
+                    vk::ImageLayout::eTransferSrcOptimal,
                     buffer,
                     1,
                     &region);
