@@ -363,6 +363,10 @@ void Vulkan::createCommandPool() {
 void Vulkan::createSwapChain() {
     auto surface_capabilities = physicalDevice.getSurfaceCapabilitiesKHR(surface);
     swapChainExtent = surface_capabilities.currentExtent;
+    if (swapChainExtent.width = UINT32_MAX) {
+        swapChainExtent.width = settings.windowWidth;
+        swapChainExtent.height = settings.windowHeight;
+    }
     vk::SwapchainCreateInfoKHR swapChainCreateInfo = {
             .surface = surface,
             .minImageCount = surface_capabilities.minImageCount,
