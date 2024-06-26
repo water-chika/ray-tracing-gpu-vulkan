@@ -24,24 +24,32 @@ add_executable(
 )
 
 target_link_libraries(RayTracingGPUVulkan
-	glfw
-	Vulkan::Vulkan
-	)
+    glfw
+    Vulkan::Vulkan
+)
 
 if(EXISTS lib/glm/CMakeLists.txt)
     add_subdirectory(lib/glm)
     target_link_libraries(RayTracingGPUVulkan glm)
 else()
     include(CheckIncludeFileCXX)
-    CHECK_INCLUDE_FILE_CXX(glm/glm.h glm_exist)
+    CHECK_INCLUDE_FILE_CXX(glm/glm.hpp glm_exist)
+    if(${glm_exist})
+    else()
+        message(FATAL_ERROR "glm not found")
+    endif()
 endif()
 
 
 if(EXISTS lib/stb/stb_image_write.h)
     target_include_directories(RayTracingGPUVulkan PUBLIC lib)
 else()
-    find_library(stb stb REQUIRED)
-    target_link_libraries(RayTracingGPUVulkan stb)
+    include(CheckIncludeFileCXX)
+    CHECK_INCLUDE_FILE_CXX(stb/stb_image_write.h stb_exist)
+    if(${stb_exist})
+    else()
+        message(FATAL_ERROR "stb not found")
+    endif()
 endif()
 
 
@@ -54,10 +62,10 @@ add_custom_command(COMMENT "Compiling ${stage} shader"
                     DEPENDS ${glsl_file} Vulkan::glslangValidator)
 endfunction()
 function(compile_glsl_help stage)
-	compile_glsl(${stage}
-		${CMAKE_CURRENT_SOURCE_DIR}/shaders/shader.${stage}
-		${CMAKE_CURRENT_BINARY_DIR}/shaders/shader.${stage}.spv
-	)
+    compile_glsl(${stage}
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/shader.${stage}
+        ${CMAKE_CURRENT_BINARY_DIR}/shaders/shader.${stage}.spv
+    )
     set(
         ${stage}_shader_path
         "shaders/shader.${stage}.spv"
