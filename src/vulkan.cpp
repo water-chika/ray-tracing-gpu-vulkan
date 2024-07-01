@@ -361,6 +361,10 @@ void Vulkan::createCommandPool() {
 }
 
 void Vulkan::createSwapChain() {
+    auto present_modes = physicalDevice.getSurfacePresentModesKHR(surface);
+    if (!std::ranges::contains(present_modes, presentMode)) {
+        presentMode = present_modes[0];
+    }
     auto surface_capabilities = physicalDevice.getSurfaceCapabilitiesKHR(surface);
     swapChainExtent = surface_capabilities.currentExtent;
     if (swapChainExtent.width = UINT32_MAX) {

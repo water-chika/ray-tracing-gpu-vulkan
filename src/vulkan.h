@@ -56,7 +56,7 @@ private:
     const vk::Format swapChainImageFormat = vk::Format::eR8G8B8A8Unorm;
     const vk::Format summedPixelColorImageFormat = vk::Format::eR32G32B32A32Sfloat;
     const vk::ColorSpaceKHR colorSpace = vk::ColorSpaceKHR::eSrgbNonlinear;
-    const vk::PresentModeKHR presentMode = vk::PresentModeKHR::eImmediate;
+    vk::PresentModeKHR presentMode = vk::PresentModeKHR::eImmediate;
 
     const std::vector<const char*> requiredInstanceExtensions = {
             VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
