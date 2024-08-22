@@ -7,9 +7,13 @@
 #include "vulkan.h"
 
 int main(int argc, const char** argv) {
+    using namespace std::literals;
     // COMMAND LINE ARGUMENTS
     uint32_t samples = 10000;
     uint32_t samplesPerRenderCall = 200;
+    bool storeRenderResult = false;
+    uint32_t width = 1920;
+    uint32_t height = 1080;
 
     if (argc >= 2) {
         std::from_chars(argv[1], argv[1] + strlen(argv[1]), samples);
@@ -17,6 +21,23 @@ int main(int argc, const char** argv) {
 
     if (argc >= 3) {
         std::from_chars(argv[2], argv[2] + strlen(argv[2]), samplesPerRenderCall);
+    }
+    for (int i = 1; i < argc; i++) {
+        if (argv[i] == "--store"s) {
+            storeRenderResult = true;
+        }
+        if (argv[i] == "--samples"s) {
+            std::from_chars(argv[i + 1], argv[i + 1] + strlen(argv[i + 1]), samples);
+        }
+        if (argv[i] == "--samples_per_render_call"s) {
+            std::from_chars(argv[i + 1], argv[i + 1] + strlen(argv[i + 1]), samplesPerRenderCall);
+        }
+        if (argv[i] == "--width"s) {
+            std::from_chars(argv[i + 1], argv[i + 1] + strlen(argv[i + 1]), width);
+        }
+        if (argv[i] == "--height"s) {
+            std::from_chars(argv[i + 1], argv[i + 1] + strlen(argv[i + 1]), height);
+        }
     }
 
     if (samples % samplesPerRenderCall != 0) {
@@ -27,8 +48,8 @@ int main(int argc, const char** argv) {
 
     // SETUP
     VulkanSettings settings = { 
-        .windowWidth = 1920, 
-        .windowHeight = 1080 
+        .windowWidth = width,
+        .windowHeight = height
     };
 
     Vulkan vulkan(settings, generateRandomScene());
@@ -69,9 +90,11 @@ int main(int argc, const char** argv) {
     std::cout << "Rendering completed: " << samples << " samples rendered in "
         << renderTime << " ms" << std::endl << std::endl;
 
-    std::cout << "Write to file:" << "render_result.png" << std::endl;
-    vulkan.write_to_file("render_result.png");
-    std::cout << "Write completes." << std::endl;
+    if (storeRenderResult) {
+        std::cout << "Write to file:" << "render_result.png" << std::endl;
+        vulkan.write_to_file("render_result.png");
+        std::cout << "Write completes." << std::endl;
+    }
 
     // WINDOW
     while (!vulkan.shouldExit()) {
