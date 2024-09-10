@@ -23,6 +23,15 @@ int main(int argc, const char** argv) {
         std::from_chars(argv[2], argv[2] + strlen(argv[2]), samplesPerRenderCall);
     }
     for (int i = 1; i < argc; i++) {
+        if (argv[i] == "--help"s) {
+            std::cout << "--help                            # Show this help infomation" << std::endl;
+            std::cout << "--store                           # Store rendered image to file" << std::endl;
+            std::cout << "--samples <count>                 # Total samples to render" << std::endl;
+            std::cout << "--samples_per_render_call <count> # Samples every render call will render" << std::endl;
+            std::cout << "--width <width>                   # Image width" << std::endl;
+            std::cout << "--height <height>                 # Image height" << std::endl;
+            exit(0);
+        }
         if (argv[i] == "--store"s) {
             storeRenderResult = true;
         }
