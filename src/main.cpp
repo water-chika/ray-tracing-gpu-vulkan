@@ -38,6 +38,9 @@ int main(int argc, const char** argv) {
         if (argv[i] == "--height"s) {
             std::from_chars(argv[i + 1], argv[i + 1] + strlen(argv[i + 1]), height);
         }
+        else {
+            std::cerr << "unknown argument: " << argv[i] << std::endl;
+        }
     }
 
     if (samples % samplesPerRenderCall != 0) {
@@ -63,7 +66,7 @@ int main(int argc, const char** argv) {
 
     auto previousRenderCallTime = std::chrono::steady_clock::now();
 
-    for (uint32_t number = 1; number <= requiredRenderCalls; number++) {
+    for (uint32_t number = 1; !vulkan.shouldExit() && number <= requiredRenderCalls; number++) {
         RenderCallInfo renderCallInfo = {
             .number = number,
             .samplesPerRenderCall = samplesPerRenderCall,
