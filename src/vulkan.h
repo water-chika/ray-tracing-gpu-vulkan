@@ -43,6 +43,8 @@ public:
 
     void render(const RenderCallInfo &renderCallInfo);
 
+    void wait_render_complete();
+
     void write_to_file(std::filesystem::path path);
 
     [[nodiscard]] bool shouldExit() const;

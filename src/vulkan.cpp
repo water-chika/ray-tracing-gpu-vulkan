@@ -93,6 +93,10 @@ void Vulkan::update() {
     glfwPollEvents();
 }
 
+void Vulkan::wait_render_complete() {
+    device.waitIdle();
+}
+
 void Vulkan::render(const RenderCallInfo& renderCallInfo) {
     if (is_window_minimized()) {
         device.waitForFences(1, &m_fences[0], true, UINT64_MAX);
