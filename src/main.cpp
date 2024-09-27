@@ -32,19 +32,19 @@ int main(int argc, const char** argv) {
             std::cout << "--height <height>                 # Image height" << std::endl;
             exit(0);
         }
-        if (argv[i] == "--store"s) {
+        else if (argv[i] == "--store"s) {
             storeRenderResult = true;
         }
-        if (argv[i] == "--samples"s) {
+        else if (argv[i] == "--samples"s) {
             std::from_chars(argv[i + 1], argv[i + 1] + strlen(argv[i + 1]), samples);
         }
-        if (argv[i] == "--samples_per_render_call"s) {
+        else if (argv[i] == "--samples_per_render_call"s) {
             std::from_chars(argv[i + 1], argv[i + 1] + strlen(argv[i + 1]), samplesPerRenderCall);
         }
-        if (argv[i] == "--width"s) {
+        else if (argv[i] == "--width"s) {
             std::from_chars(argv[i + 1], argv[i + 1] + strlen(argv[i + 1]), width);
         }
-        if (argv[i] == "--height"s) {
+        else if (argv[i] == "--height"s) {
             std::from_chars(argv[i + 1], argv[i + 1] + strlen(argv[i + 1]), height);
         }
         else {
