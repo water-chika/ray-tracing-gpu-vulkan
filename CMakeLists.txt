@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 23)
 
 find_package(Vulkan REQUIRED)
 
-if(EXISTS lib/glfw/CMakeLists.txt)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/lib/glfw/CMakeLists.txt)
     add_subdirectory(lib/glfw)
 else()
     find_library(glfw glfw REQUIRED)
@@ -28,7 +28,7 @@ target_link_libraries(RayTracingGPUVulkan
     Vulkan::Vulkan
 )
 
-if(EXISTS lib/glm/CMakeLists.txt)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/lib/glm/CMakeLists.txt)
     add_subdirectory(lib/glm)
     target_link_libraries(RayTracingGPUVulkan glm)
 else()
@@ -41,7 +41,7 @@ else()
 endif()
 
 
-if(EXISTS lib/stb/stb_image_write.h)
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/lib/stb/stb_image_write.h)
     target_include_directories(RayTracingGPUVulkan PUBLIC lib)
 else()
     include(CheckIncludeFileCXX)

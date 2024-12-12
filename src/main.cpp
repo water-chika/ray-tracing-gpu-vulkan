@@ -7,9 +7,13 @@
 #include "vulkan.h"
 
 int main(int argc, const char** argv) {
+    using namespace std::literals;
     // COMMAND LINE ARGUMENTS
-    uint32_t samples = 10000;
-    uint32_t samplesPerRenderCall = 200;
+    uint32_t samples = 10;
+    uint32_t samplesPerRenderCall = 1;
+    bool storeRenderResult = false;
+    uint32_t width = 1920;
+    uint32_t height = 1080;
 
     if (argc >= 2) {
         std::from_chars(argv[1], argv[1] + strlen(argv[1]), samples);
@@ -17,6 +21,35 @@ int main(int argc, const char** argv) {
 
     if (argc >= 3) {
         std::from_chars(argv[2], argv[2] + strlen(argv[2]), samplesPerRenderCall);
+    }
+    for (int i = 1; i < argc; i++) {
+        if (argv[i] == "--help"s) {
+            std::cout << "--help                            # Show this help infomation" << std::endl;
+            std::cout << "--store                           # Store rendered image to file" << std::endl;
+            std::cout << "--samples <count>                 # Total samples to render" << std::endl;
+            std::cout << "--samples_per_render_call <count> # Samples every render call will render" << std::endl;
+            std::cout << "--width <width>                   # Image width" << std::endl;
+            std::cout << "--height <height>                 # Image height" << std::endl;
+            exit(0);
+        }
+        else if (argv[i] == "--store"s) {
+            storeRenderResult = true;
+        }
+        else if (argv[i] == "--samples"s) {
+            std::from_chars(argv[i + 1], argv[i + 1] + strlen(argv[i + 1]), samples);
+        }
+        else if (argv[i] == "--samples_per_render_call"s) {
+            std::from_chars(argv[i + 1], argv[i + 1] + strlen(argv[i + 1]), samplesPerRenderCall);
+        }
+        else if (argv[i] == "--width"s) {
+            std::from_chars(argv[i + 1], argv[i + 1] + strlen(argv[i + 1]), width);
+        }
+        else if (argv[i] == "--height"s) {
+            std::from_chars(argv[i + 1], argv[i + 1] + strlen(argv[i + 1]), height);
+        }
+        else {
+            std::cerr << "unknown argument: " << argv[i] << std::endl;
+        }
     }
 
     if (samples % samplesPerRenderCall != 0) {
@@ -27,8 +60,8 @@ int main(int argc, const char** argv) {
 
     // SETUP
     VulkanSettings settings = { 
-        .windowWidth = 1920, 
-        .windowHeight = 1080 
+        .windowWidth = width,
+        .windowHeight = height
     };
 
     Vulkan vulkan(settings, generateRandomScene());
@@ -40,9 +73,9 @@ int main(int argc, const char** argv) {
     auto renderBeginTime = std::chrono::steady_clock::now();
     int requiredRenderCalls = samples / samplesPerRenderCall;
 
-    auto previousRenderCallTime = std::chrono::steady_clock::now();
-
-    for (uint32_t number = 1; number <= requiredRenderCalls; number++) {
+    uint32_t number = 0;
+    while (number < requiredRenderCalls) {
+        ++number;
         RenderCallInfo renderCallInfo = {
             .number = number,
             .samplesPerRenderCall = samplesPerRenderCall,
@@ -50,28 +83,28 @@ int main(int argc, const char** argv) {
 
         std::cout << "Render call " << number << " / " << requiredRenderCalls
             << " (" << (number * samplesPerRenderCall) << " / " << samples
-            << " samples)";
+            << " samples)" << std::endl;
 
         vulkan.render(renderCallInfo);
 
-        auto currentRenderCallTime = std::chrono::steady_clock::now();
-
-        auto renderCallTime = std::chrono::duration_cast<std::chrono::milliseconds>(
-                currentRenderCallTime - previousRenderCallTime).count();
-        previousRenderCallTime = currentRenderCallTime;
-        std::cout << " - Completed in " << renderCallTime << " ms" << std::endl;
-
         vulkan.update();
+        if (vulkan.shouldExit()) {
+            break;
+        }
     }
+
+    vulkan.wait_render_complete();
 
     auto renderTime = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - renderBeginTime).count();
-    std::cout << "Rendering completed: " << samples << " samples rendered in "
+    std::cout << "Rendering completed: " << number * samplesPerRenderCall << " samples rendered in "
         << renderTime << " ms" << std::endl << std::endl;
 
-    std::cout << "Write to file:" << "render_result.png" << std::endl;
-    vulkan.write_to_file("render_result.png");
-    std::cout << "Write completes." << std::endl;
+    if (storeRenderResult) {
+        std::cout << "Write to file:" << "render_result.png" << std::endl;
+        vulkan.write_to_file("render_result.png");
+        std::cout << "Write completes." << std::endl;
+    }
 
     // WINDOW
     while (!vulkan.shouldExit()) {

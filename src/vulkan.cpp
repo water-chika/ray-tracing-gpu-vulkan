@@ -93,6 +93,10 @@ void Vulkan::update() {
     glfwPollEvents();
 }
 
+void Vulkan::wait_render_complete() {
+    device.waitIdle();
+}
+
 void Vulkan::render(const RenderCallInfo& renderCallInfo) {
     if (is_window_minimized()) {
         device.waitForFences(1, &m_fences[0], true, UINT64_MAX);
@@ -198,12 +202,7 @@ void Vulkan::createInstance() {
     enabledExtensions.insert(enabledExtensions.end(), requiredInstanceExtensions.begin(),
                              requiredInstanceExtensions.end());
 
-    std::vector<const char*> enabledLayers =
-            {"VK_LAYER_KHRONOS_validation", "VK_LAYER_LUNARG_monitor", "VK_LAYER_KHRONOS_synchronization2"};
-
-#ifndef _DEBUG
-    enabledLayers.clear();
-#endif
+    std::vector<const char*> enabledLayers ={ };
 
     vk::DebugUtilsMessengerCreateInfoEXT debugMessengerInfo = {
             .messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eError |
@@ -361,6 +360,10 @@ void Vulkan::createCommandPool() {
 }
 
 void Vulkan::createSwapChain() {
+    auto present_modes = physicalDevice.getSurfacePresentModesKHR(surface);
+    if (!std::ranges::contains(present_modes, presentMode)) {
+        presentMode = present_modes[0];
+    }
     auto surface_capabilities = physicalDevice.getSurfaceCapabilitiesKHR(surface);
     swapChainExtent = surface_capabilities.currentExtent;
     if (UINT32_MAX == swapChainExtent.width) {
