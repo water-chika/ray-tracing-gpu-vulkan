@@ -26,7 +26,7 @@ Vulkan::Vulkan(VulkanSettings settings, Scene scene) :
     findQueueFamilies();
     createLogicalDevice();
 
-    dynamicDispatchLoader = vk::DispatchLoaderDynamic(instance, vkGetInstanceProcAddr, device);
+    dynamicDispatchLoader = vk::detail::DispatchLoaderDynamic(instance, vkGetInstanceProcAddr, device);
 
     createCommandPool();
     createSwapChain();
@@ -170,20 +170,6 @@ void Vulkan::createWindow() {
     glfwSetWindowSizeCallback(window, window_size_callback);
 }
 
-VKAPI_ATTR VkBool32 VKAPI_CALL debugMessageFunc(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
-                                                VkDebugUtilsMessageTypeFlagsEXT messageTypes,
-                                                VkDebugUtilsMessengerCallbackDataEXT const* pCallbackData,
-                                                void* pUserData) {
-    std::cout << "["
-              << vk::to_string(static_cast<vk::DebugUtilsMessageSeverityFlagBitsEXT>(messageSeverity)) << " | "
-              << vk::to_string(static_cast<vk::DebugUtilsMessageTypeFlagsEXT>( messageTypes )) << "]:\n"
-              << "id      : " << pCallbackData->pMessageIdName << "\n"
-              << "message : " << pCallbackData->pMessage << "\n"
-              << std::endl;
-
-    return false;
-}
-
 void Vulkan::createInstance() {
     vk::ApplicationInfo applicationInfo = {
             .pApplicationName = "Ray Tracing (Vulkan)",
@@ -204,20 +190,7 @@ void Vulkan::createInstance() {
 
     std::vector<const char*> enabledLayers ={ };
 
-    vk::DebugUtilsMessengerCreateInfoEXT debugMessengerInfo = {
-            .messageSeverity = vk::DebugUtilsMessageSeverityFlagBitsEXT::eError |
-                               vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
-                               vk::DebugUtilsMessageSeverityFlagBitsEXT::eInfo |
-                               vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose,
-            .messageType = vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation |
-                           vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance |
-                           vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral,
-            .pfnUserCallback = &debugMessageFunc,
-            .pUserData = nullptr
-    };
-
     vk::InstanceCreateInfo instanceCreateInfo = {
-            .pNext = &debugMessengerInfo,
             .pApplicationInfo = &applicationInfo,
             .enabledLayerCount = static_cast<uint32_t>(enabledLayers.size()),
             .ppEnabledLayerNames = enabledLayers.data(),

@@ -84,7 +84,7 @@ private:
     vk::PhysicalDevice physicalDevice;
     vk::Device device;
 
-    vk::DispatchLoaderDynamic dynamicDispatchLoader;
+    vk::detail::DispatchLoaderDynamic dynamicDispatchLoader;
 
     uint32_t presentQueueFamily = 0, computeQueueFamily = 0;
     vk::Queue presentQueue, computeQueue;
