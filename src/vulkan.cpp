@@ -1285,8 +1285,10 @@ void Vulkan::updateRenderCallInfoBuffer(const RenderCallInfo &renderCallInfo, in
 void Vulkan::write_to_file(std::filesystem::path path) {
     auto width = settings.windowWidth;
     auto height = settings.windowHeight;
+    int component_count = 4;
+    size_t pixel_size = component_count * sizeof(float);
     vk::BufferCreateInfo bufferCreateInfo = {
-            .size = width*height*4,
+            .size = width*height* pixel_size,
             .usage = vk::BufferUsageFlagBits::eTransferDst,
             .sharingMode = vk::SharingMode::eExclusive
     };
@@ -1323,7 +1325,7 @@ void Vulkan::write_to_file(std::filesystem::path path) {
                 .setSrcQueueFamilyIndex(computeQueueFamily)
                 .setDstAccessMask(vk::AccessFlagBits::eMemoryRead)
                 .setDstQueueFamilyIndex(computeQueueFamily)
-                .setImage(renderTargetImage.image)
+                .setImage(summedPixelColorImage.image)
                 .setOldLayout(vk::ImageLayout::eTransferSrcOptimal)
                 .setNewLayout(vk::ImageLayout::eTransferSrcOptimal)
                 .setSubresourceRange(
@@ -1342,16 +1344,16 @@ void Vulkan::write_to_file(std::filesystem::path path) {
                 .setImageExtent(vk::Extent3D{width,height,1})
             ;
             cmd.copyImageToBuffer(
-                    renderTargetImage.image,
+                summedPixelColorImage.image,
                     vk::ImageLayout::eTransferSrcOptimal,
                     buffer,
                     1,
                     &region);
         });
 
-    void* data = device.mapMemory(memory, 0, vk::WholeSize);
+    auto data = reinterpret_cast<const float*>(device.mapMemory(memory, 0, vk::WholeSize));
 
-    stbi_write_png(path.string().c_str(), width, height, 4, data, width*4);
+    stbi_write_hdr(path.string().c_str(), width, height, component_count, data);
 
     device.freeMemory(memory);
     device.destroyBuffer(buffer);

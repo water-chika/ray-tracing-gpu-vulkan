@@ -102,7 +102,7 @@ int main(int argc, const char** argv) {
 
     if (storeRenderResult) {
         std::cout << "Write to file:" << "render_result.png" << std::endl;
-        vulkan.write_to_file("render_result.png");
+        vulkan.write_to_file("render_result.hdr");
         std::cout << "Write completes." << std::endl;
     }
 
