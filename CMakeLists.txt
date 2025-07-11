@@ -11,9 +11,10 @@ else()
     find_library(glfw glfw REQUIRED)
 endif()
 
-add_executable(
-        RayTracingGPUVulkan
-        src/main.cpp
+add_library(
+        ray_trace SHARED
+        src/ray_trace.cpp
+        src/ray_trace.h
         src/vulkan_settings.h
         src/vulkan.h
         src/vulkan.cpp
@@ -23,14 +24,21 @@ add_executable(
         ${CMAKE_CURRENT_BINARY_DIR}/include/shader_path.hpp
 )
 
-target_link_libraries(RayTracingGPUVulkan
+target_link_libraries(ray_trace
     glfw
     Vulkan::Vulkan
 )
 
+
+add_executable(
+    RayTracingGPUVulkan
+    src/main.cpp
+)
+target_link_libraries(RayTracingGPUVulkan LINK_PRIVATE ray_trace)
+
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/lib/glm/CMakeLists.txt)
     add_subdirectory(lib/glm)
-    target_link_libraries(RayTracingGPUVulkan glm)
+    target_link_libraries(ray_trace glm)
 else()
     include(CheckIncludeFileCXX)
     CHECK_INCLUDE_FILE_CXX(glm/glm.hpp glm_exist)
@@ -42,7 +50,7 @@ endif()
 
 
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/lib/stb/stb_image_write.h)
-    target_include_directories(RayTracingGPUVulkan PUBLIC lib)
+    target_include_directories(ray_trace PUBLIC lib)
 else()
     include(CheckIncludeFileCXX)
     CHECK_INCLUDE_FILE_CXX(stb/stb_image_write.h stb_exist)
@@ -71,7 +79,7 @@ function(compile_glsl_help stage)
         "shaders/shader.${stage}.spv"
         PARENT_SCOPE
     )
-    target_sources(RayTracingGPUVulkan PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shaders/shader.${stage} ${CMAKE_CURRENT_BINARY_DIR}/shaders/shader.${stage}.spv)
+    target_sources(ray_trace PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shaders/shader.${stage} ${CMAKE_CURRENT_BINARY_DIR}/shaders/shader.${stage}.spv)
 endfunction()
 
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/shaders)
@@ -85,4 +93,4 @@ configure_file(
     ${CMAKE_CURRENT_BINARY_DIR}/include/shader_path.hpp
 )
 
-target_include_directories(RayTracingGPUVulkan PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/include)
+target_include_directories(ray_trace PUBLIC ${CMAKE_CURRENT_BINARY_DIR}/include)
