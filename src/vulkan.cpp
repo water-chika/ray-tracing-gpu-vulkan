@@ -30,15 +30,6 @@ Vulkan::~Vulkan() {
         [this](auto buffer) {
             destroyBuffer(buffer);
         });
-
-    std::ranges::for_each(swapChainImageViews, [this](auto swapChainImageView) {device.destroyImageView(swapChainImageView); });
-    device.destroySwapchainKHR(swapChain);
-    device.destroyCommandPool(commandPool);
-
-    destroyImage(renderTargetImage);
-    destroyImage(summedPixelColorImage);
-
-    device.destroy();
 }
 
 
@@ -91,121 +82,6 @@ void Vulkan::render(const RenderCallInfo& renderCallInfo) {
     };
 
     presentQueue.presentKHR(presentInfo);
-}
-
-void Vulkan::createLogicalDevice() {
-    float queuePriority = 1.0f;
-    std::vector<vk::DeviceQueueCreateInfo> queueCreateInfos = {
-            {
-                    .queueFamilyIndex = presentQueueFamily,
-                    .queueCount = 1,
-                    .pQueuePriorities = &queuePriority
-            },
-            {
-                    .queueFamilyIndex = computeQueueFamily,
-                    .queueCount = 1,
-                    .pQueuePriorities = &queuePriority
-            }
-    };
-
-    vk::PhysicalDeviceFeatures deviceFeatures = {
-        .shaderFloat64 = true,
-    };
-
-    vk::PhysicalDeviceBufferDeviceAddressFeatures bufferDeviceAddressFeatures = {
-            .bufferDeviceAddress = true,
-            .bufferDeviceAddressCaptureReplay = false,
-            .bufferDeviceAddressMultiDevice = false
-    };
-
-    vk::PhysicalDeviceRayTracingPipelineFeaturesKHR rayTracingPipelineFeatures = {
-            .pNext = &bufferDeviceAddressFeatures,
-            .rayTracingPipeline = true
-    };
-
-    vk::PhysicalDeviceAccelerationStructureFeaturesKHR accelerationStructureFeatures = {
-            .pNext = &rayTracingPipelineFeatures,
-            .accelerationStructure = true,
-            .accelerationStructureCaptureReplay = true,
-            .accelerationStructureIndirectBuild = false,
-            .accelerationStructureHostCommands = false,
-            .descriptorBindingAccelerationStructureUpdateAfterBind = false
-    };
-
-    auto requiredDeviceExtensions = Vulkan::get_required_device_extensions();
-
-    vk::DeviceCreateInfo deviceCreateInfo = {
-            .pNext = &accelerationStructureFeatures,
-            .queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size()),
-            .pQueueCreateInfos = queueCreateInfos.data(),
-            .enabledExtensionCount = static_cast<uint32_t>(requiredDeviceExtensions.size()),
-            .ppEnabledExtensionNames = requiredDeviceExtensions.data(),
-            .pEnabledFeatures = &deviceFeatures
-    };
-
-    device = physicalDevice.createDevice(deviceCreateInfo);
-
-    computeQueue = device.getQueue(computeQueueFamily, 0);
-    presentQueue = device.getQueue(presentQueueFamily, 0);
-}
-
-void Vulkan::createCommandPool() {
-    commandPool = device.createCommandPool({.queueFamilyIndex = computeQueueFamily});
-}
-
-void Vulkan::createSwapChain() {
-    auto present_modes = physicalDevice.getSurfacePresentModesKHR(surface);
-    if (!std::ranges::contains(present_modes, presentMode)) {
-        presentMode = present_modes[0];
-    }
-    auto surface_capabilities = physicalDevice.getSurfaceCapabilitiesKHR(surface);
-    swapChainExtent = surface_capabilities.currentExtent;
-    if (UINT32_MAX == swapChainExtent.width) {
-        swapChainExtent.width = settings.windowWidth;
-        swapChainExtent.height = settings.windowHeight;
-    }
-    vk::SwapchainCreateInfoKHR swapChainCreateInfo = {
-            .surface = surface,
-            .minImageCount = surface_capabilities.minImageCount,
-            .imageFormat = swapChainImageFormat,
-            .imageColorSpace = colorSpace,
-            .imageExtent = swapChainExtent,
-            .imageArrayLayers = 1,
-            .imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst,
-            .imageSharingMode = vk::SharingMode::eExclusive,
-            .preTransform = surface_capabilities.currentTransform,
-            .compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
-            .presentMode = presentMode,
-            .clipped = true,
-            .oldSwapchain = nullptr
-    };
-
-    swapChain = device.createSwapchainKHR(swapChainCreateInfo);
-
-    // swap chain images
-    swapChainImages = device.getSwapchainImagesKHR(swapChain);
-    swapChainImageViews.resize(swapChainImages.size());
-    std::ranges::transform(swapChainImages, swapChainImageViews.begin(),
-        [this](auto swapChainImage) {
-            return createImageView(swapChainImage, swapChainImageFormat);
-        }
-    );
-}
-
-vk::ImageView Vulkan::createImageView(const vk::Image &image, const vk::Format &format) const {
-    return device.createImageView(
-            {
-                    .image = image,
-                    .viewType = vk::ImageViewType::e2D,
-                    .format = format,
-                    .subresourceRange = {
-                            .aspectMask = vk::ImageAspectFlagBits::eColor,
-                            .baseMipLevel = 0,
-                            .levelCount = 1,
-                            .baseArrayLayer = 0,
-                            .layerCount = 1
-                    }
-            });
 }
 
 void Vulkan::createDescriptorSetLayout() {
@@ -613,17 +489,7 @@ void Vulkan::createSemaphore() {
         });
 }
 
-uint32_t Vulkan::findMemoryTypeIndex(const uint32_t &memoryTypeBits, const vk::MemoryPropertyFlags &properties) {
-    vk::PhysicalDeviceMemoryProperties memoryProperties = physicalDevice.getMemoryProperties();
 
-    for (uint32_t i = 0; i < memoryProperties.memoryTypeCount; i++) {
-        if ((memoryTypeBits & (1 << i)) && (memoryProperties.memoryTypes[i].propertyFlags & properties) == properties) {
-            return i;
-        }
-    }
-
-    throw std::runtime_error("Unable to find suitable memory type!");
-}
 
 vk::ImageMemoryBarrier Vulkan::getImagePipelineBarrier(
         const vk::AccessFlags srcAccessFlags, const vk::AccessFlags dstAccessFlags,
@@ -648,78 +514,6 @@ vk::ImageMemoryBarrier Vulkan::getImagePipelineBarrier(
     };
 }
 
-VulkanImage Vulkan::createImage(const vk::Format &format, const vk::Flags<vk::ImageUsageFlagBits> &usageFlagBits) {
-    vk::ImageCreateInfo imageCreateInfo = {
-            .imageType = vk::ImageType::e2D,
-            .format = format,
-            .extent = {.width = settings.windowWidth, .height = settings.windowHeight, .depth = 1},
-            .mipLevels = 1,
-            .arrayLayers = 1,
-            .samples = vk::SampleCountFlagBits::e1,
-            .tiling = vk::ImageTiling::eOptimal,
-            .usage = usageFlagBits,
-            .sharingMode = vk::SharingMode::eExclusive,
-            .initialLayout = vk::ImageLayout::eUndefined
-    };
-
-    vk::Image image = device.createImage(imageCreateInfo);
-
-    vk::MemoryRequirements memoryRequirements = device.getImageMemoryRequirements(image);
-
-    vk::MemoryAllocateInfo allocateInfo = {
-            .allocationSize = memoryRequirements.size,
-            .memoryTypeIndex = findMemoryTypeIndex(memoryRequirements.memoryTypeBits,
-                                                   vk::MemoryPropertyFlagBits::eDeviceLocal)
-    };
-
-    vk::DeviceMemory memory = device.allocateMemory(allocateInfo);
-
-    device.bindImageMemory(image, memory, 0);
-
-    return {
-            .image = image,
-            .memory = memory,
-            .imageView = createImageView(image, format)
-    };
-}
-
-void Vulkan::createImages() {
-    renderTargetImage = createImage(swapChainImageFormat,
-                                    vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc);
-
-    summedPixelColorImage = createImage(summedPixelColorImageFormat, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferDst);
-
-    executeSingleTimeCommand(
-        [this](vk::CommandBuffer commandBuffer) {
-            commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe,
-                vk::PipelineStageFlagBits::eTransfer,
-                vk::DependencyFlagBits::eByRegion,
-                {}, {},
-                getImagePipelineBarrier(
-                    vk::AccessFlagBits::eNoneKHR, vk::AccessFlagBits::eTransferWrite,
-                    vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, summedPixelColorImage.image));
-            commandBuffer.clearColorImage(summedPixelColorImage.image, vk::ImageLayout::eTransferDstOptimal,
-                vk::ClearColorValue{},
-                vk::ImageSubresourceRange{}
-                    .setAspectMask(vk::ImageAspectFlagBits::eColor)
-                    .setLayerCount(1)
-                    .setLevelCount(1));
-            commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
-                vk::PipelineStageFlagBits::eRayTracingShaderKHR,
-                vk::DependencyFlagBits::eByRegion,
-                {}, {},
-                getImagePipelineBarrier(
-                    vk::AccessFlagBits::eTransferWrite, vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite,
-                    vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eGeneral, summedPixelColorImage.image));
-        }
-    );
-}
-
-void Vulkan::destroyImage(const VulkanImage &image) const {
-    device.destroyImageView(image.imageView);
-    device.destroyImage(image.image);
-    device.freeMemory(image.memory);
-}
 
 VulkanBuffer Vulkan::createBuffer(const vk::DeviceSize &size, const vk::Flags<vk::BufferUsageFlagBits> &usage,
                                   const vk::Flags<vk::MemoryPropertyFlagBits> &memoryProperty) {
@@ -740,7 +534,7 @@ VulkanBuffer Vulkan::createBuffer(const vk::DeviceSize &size, const vk::Flags<vk
     vk::MemoryAllocateInfo allocateInfo = {
             .pNext = &allocateFlagsInfo,
             .allocationSize = memoryRequirements.size,
-            .memoryTypeIndex = findMemoryTypeIndex(memoryRequirements.memoryTypeBits, memoryProperty)
+            .memoryTypeIndex = vulkan::findMemoryTypeIndex(m_memory_properties,memoryRequirements.memoryTypeBits, memoryProperty)
     };
 
     vk::DeviceMemory memory = device.allocateMemory(allocateInfo);
@@ -1124,7 +918,8 @@ void Vulkan::write_to_file(std::filesystem::path path) {
     vk::MemoryAllocateInfo allocateInfo = {
             .pNext = &allocateFlagsInfo,
             .allocationSize = memoryRequirements.size,
-            .memoryTypeIndex = findMemoryTypeIndex(
+            .memoryTypeIndex = vulkan::findMemoryTypeIndex(
+                m_memory_properties,
                     memoryRequirements.memoryTypeBits,
                     vk::MemoryPropertyFlagBits::eHostVisible|
                     vk::MemoryPropertyFlagBits::eHostCoherent)

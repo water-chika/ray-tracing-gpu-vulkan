@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <set>
 #include <string>
+#include <ranges>
 
 struct VulkanImage {
     vk::Image image;
@@ -132,18 +133,206 @@ namespace vulkan {
 
         return std::pair{ computeQueueFamily, presentQueueFamily };
     }
+
+
+    auto create_device(
+        vk::Instance instance,
+        vk::PhysicalDevice physical_device,
+        uint32_t computeQueueFamily, uint32_t presentQueueFamily,
+        const auto& extensions
+        ) {
+        float queuePriority = 1.0f;
+        std::vector<vk::DeviceQueueCreateInfo> queueCreateInfos = {
+                {
+                        .queueFamilyIndex = presentQueueFamily,
+                        .queueCount = 1,
+                        .pQueuePriorities = &queuePriority
+                },
+                {
+                        .queueFamilyIndex = computeQueueFamily,
+                        .queueCount = 1,
+                        .pQueuePriorities = &queuePriority
+                }
+        };
+
+        vk::PhysicalDeviceFeatures deviceFeatures = {
+            .shaderFloat64 = true,
+        };
+
+        vk::PhysicalDeviceBufferDeviceAddressFeatures bufferDeviceAddressFeatures = {
+                .bufferDeviceAddress = true,
+                .bufferDeviceAddressCaptureReplay = false,
+                .bufferDeviceAddressMultiDevice = false
+        };
+
+        vk::PhysicalDeviceRayTracingPipelineFeaturesKHR rayTracingPipelineFeatures = {
+                .pNext = &bufferDeviceAddressFeatures,
+                .rayTracingPipeline = true
+        };
+
+        vk::PhysicalDeviceAccelerationStructureFeaturesKHR accelerationStructureFeatures = {
+                .pNext = &rayTracingPipelineFeatures,
+                .accelerationStructure = true,
+                .accelerationStructureCaptureReplay = true,
+                .accelerationStructureIndirectBuild = false,
+                .accelerationStructureHostCommands = false,
+                .descriptorBindingAccelerationStructureUpdateAfterBind = false
+        };
+
+        vk::DeviceCreateInfo deviceCreateInfo = {
+                .pNext = &accelerationStructureFeatures,
+                .queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size()),
+                .pQueueCreateInfos = queueCreateInfos.data(),
+                .enabledExtensionCount = static_cast<uint32_t>(extensions.size()),
+                .ppEnabledExtensionNames = extensions.data(),
+                .pEnabledFeatures = &deviceFeatures
+        };
+
+        auto device = physical_device.createDevice(deviceCreateInfo);
+
+        auto computeQueue = device.getQueue(computeQueueFamily, 0);
+        auto presentQueue = device.getQueue(presentQueueFamily, 0);
+
+        return std::tuple{ device, computeQueue, presentQueue };
+    }
+
+
+    inline auto create_swapchain(
+        vk::PhysicalDevice physicalDevice,
+        vk::SurfaceKHR surface,
+        vk::Device device,
+        uint32_t min_image_count,
+        vk::Format format,
+        vk::ColorSpaceKHR color_space,
+        vk::PresentModeKHR presentMode,
+        vk::Extent2D swapchain_extent,
+        vk::SurfaceTransformFlagBitsKHR pre_transform
+    ) {
+        auto present_modes = physicalDevice.getSurfacePresentModesKHR(surface);
+        if (!std::ranges::contains(present_modes, presentMode)) {
+            presentMode = present_modes[0];
+        }
+
+        vk::SwapchainCreateInfoKHR swapChainCreateInfo = {
+                .surface = surface,
+                .minImageCount = min_image_count,
+                .imageFormat = format,
+                .imageColorSpace = color_space,
+                .imageExtent = swapchain_extent,
+                .imageArrayLayers = 1,
+                .imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst,
+                .imageSharingMode = vk::SharingMode::eExclusive,
+                .preTransform = pre_transform,
+                .compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
+                .presentMode = presentMode,
+                .clipped = true,
+                .oldSwapchain = nullptr
+        };
+
+        auto swapchain = device.createSwapchainKHR(swapChainCreateInfo);
+        return swapchain;
+    }
+
+    inline uint32_t findMemoryTypeIndex(vk::PhysicalDeviceMemoryProperties& memory_properties, const uint32_t& memoryTypeBits, const vk::MemoryPropertyFlags& properties) {
+        for (uint32_t i = 0; i < memory_properties.memoryTypeCount; i++) {
+            if ((memoryTypeBits & (1 << i)) && (memory_properties.memoryTypes[i].propertyFlags & properties) == properties) {
+                return i;
+            }
+        }
+
+        throw std::runtime_error("Unable to find suitable memory type!");
+    }
+
+    inline VulkanImage create_image(vk::Device device, vk::Extent3D extent, const vk::Format format, const vk::Flags<vk::ImageUsageFlagBits> usageFlagBits,
+        vk::PhysicalDeviceMemoryProperties memory_properties) {
+        vk::ImageCreateInfo imageCreateInfo = {
+                .imageType = vk::ImageType::e2D,
+                .format = format,
+                .extent = extent,
+                .mipLevels = 1,
+                .arrayLayers = 1,
+                .samples = vk::SampleCountFlagBits::e1,
+                .tiling = vk::ImageTiling::eOptimal,
+                .usage = usageFlagBits,
+                .sharingMode = vk::SharingMode::eExclusive,
+                .initialLayout = vk::ImageLayout::eUndefined
+        };
+
+        vk::Image image = device.createImage(imageCreateInfo);
+
+        vk::MemoryRequirements memoryRequirements = device.getImageMemoryRequirements(image);
+
+        vk::MemoryAllocateInfo allocateInfo = {
+                .allocationSize = memoryRequirements.size,
+                .memoryTypeIndex = findMemoryTypeIndex(
+                    memory_properties,
+                    memoryRequirements.memoryTypeBits,
+                    vk::MemoryPropertyFlagBits::eDeviceLocal)
+        };
+
+        vk::DeviceMemory memory = device.allocateMemory(allocateInfo);
+
+        device.bindImageMemory(image, memory, 0);
+
+        return {
+                .image = image,
+                .memory = memory,
+                .imageView = device.createImageView(
+                    {
+                            .image = image,
+                            .viewType = vk::ImageViewType::e2D,
+                            .format = format,
+                            .subresourceRange = {
+                                    .aspectMask = vk::ImageAspectFlagBits::eColor,
+                                    .baseMipLevel = 0,
+                                    .levelCount = 1,
+                                    .baseArrayLayer = 0,
+                                    .layerCount = 1
+                            }
+                    })
+        };
+    }
+
+    inline auto create_images(vk::Device device, vk::Extent3D extent, vk::PhysicalDeviceMemoryProperties memory_properties) {
+        auto renderTargetImage = create_image(
+            device,
+            extent,
+            vk::Format::eR8G8B8A8Unorm,
+            vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc, memory_properties);
+
+        const vk::Format summedPixelColorImageFormat = vk::Format::eR32G32B32A32Sfloat;
+        auto summedPixelColorImage = create_image(device, extent, summedPixelColorImageFormat, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferDst, memory_properties);
+
+        return std::tuple{ renderTargetImage, summedPixelColorImage };
+    }
+
+    inline void destroy_image(vk::Device device, const VulkanImage& image) {
+        device.destroyImageView(image.imageView);
+        device.destroyImage(image.image);
+        device.freeMemory(image.memory);
+    }
 }
 
 
 class Vulkan {
 public:
     Vulkan(
-        vk::Instance instance, vk::SurfaceKHR surface, vk::PhysicalDevice physical_device,
+        vk::Instance instance, vk::SurfaceKHR surface,
+        vk::PhysicalDevice physical_device, vk::PhysicalDeviceMemoryProperties memory_properties,
+        vk::Device device, vk::Queue compute_queue, vk::Queue present_queue,
         std::pair<uint32_t, uint32_t> compute_present_queue_families,
+        vk::CommandPool command_pool,
+        vk::SwapchainKHR swapchain, auto swapchain_images, auto swapchain_image_views,
+        vk::Extent2D swapchain_extent,
+        VulkanImage render_target_image, VulkanImage summed_image,
         VulkanSettings settings, Scene scene) :
         instance{instance}, surface{surface},
-        physicalDevice{ physical_device },
+        physicalDevice{ physical_device }, m_memory_properties{memory_properties},
+        device{ device }, computeQueue{compute_queue}, presentQueue{present_queue},
         computeQueueFamily{ compute_present_queue_families.first }, presentQueueFamily{ compute_present_queue_families.second },
+        commandPool{command_pool},
+        swapChain{ swapchain }, swapChainImages{ swapchain_images }, swapChainImageViews{ swapchain_image_views }, swapChainExtent{ swapchain_extent },
+        renderTargetImage{render_target_image}, summedPixelColorImage{summed_image},
         settings(settings), scene(scene),
         m_width(settings.windowWidth), m_height(settings.windowHeight)
     {
@@ -152,13 +341,33 @@ public:
         for (int i = 0; i < scene.sphereAmount; i++) {
             aabbs.push_back(getAABBFromSphere(scene.spheres[i].geometry));
         }
-        createLogicalDevice();
 
         dynamicDispatchLoader = vk::detail::DispatchLoaderDynamic(instance, vkGetInstanceProcAddr, device);
 
-        createCommandPool();
-        createSwapChain();
-        createImages();
+        executeSingleTimeCommand(
+            [this](vk::CommandBuffer commandBuffer) {
+                commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe,
+                    vk::PipelineStageFlagBits::eTransfer,
+                    vk::DependencyFlagBits::eByRegion,
+                    {}, {},
+                    getImagePipelineBarrier(
+                        vk::AccessFlagBits::eNoneKHR, vk::AccessFlagBits::eTransferWrite,
+                        vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, summedPixelColorImage.image));
+                commandBuffer.clearColorImage(summedPixelColorImage.image, vk::ImageLayout::eTransferDstOptimal,
+                    vk::ClearColorValue{},
+                    vk::ImageSubresourceRange{}
+                    .setAspectMask(vk::ImageAspectFlagBits::eColor)
+                    .setLayerCount(1)
+                    .setLevelCount(1));
+                commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+                    vk::PipelineStageFlagBits::eRayTracingShaderKHR,
+                    vk::DependencyFlagBits::eByRegion,
+                    {}, {},
+                    getImagePipelineBarrier(
+                        vk::AccessFlagBits::eTransferWrite, vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite,
+                        vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eGeneral, summedPixelColorImage.image));
+            }
+        );
 
         createAABBBuffer();
         createBottomAccelerationStructure();
@@ -216,17 +425,10 @@ private:
     Scene scene;
     std::vector<vk::AabbPositionsKHR> aabbs;
 
-    const vk::Format swapChainImageFormat = vk::Format::eR8G8B8A8Unorm;
-    const vk::Format summedPixelColorImageFormat = vk::Format::eR32G32B32A32Sfloat;
-    const vk::ColorSpaceKHR colorSpace = vk::ColorSpaceKHR::eSrgbNonlinear;
-    vk::PresentModeKHR presentMode = vk::PresentModeKHR::eImmediate;
-
-
-
-
     vk::Instance instance;
     vk::SurfaceKHR surface;
     vk::PhysicalDevice physicalDevice;
+    vk::PhysicalDeviceMemoryProperties m_memory_properties;
     vk::Device device;
 
     vk::detail::DispatchLoaderDynamic dynamicDispatchLoader;
@@ -290,20 +492,6 @@ private:
     int m_width;
     int m_height;
 
-    void createSurface(auto&& create_surface) {
-        surface = create_surface(instance);
-    }
-
-    void findQueueFamilies();
-
-    void createLogicalDevice();
-
-    void createCommandPool();
-
-    void createSwapChain();
-
-    [[nodiscard]] vk::ImageView createImageView(const vk::Image &image, const vk::Format &format) const;
-
     void createDescriptorSetLayout();
 
     void createDescriptorPool();
@@ -323,19 +511,9 @@ private:
 
     void createSemaphore();
 
-    void createImages();
-
-    [[nodiscard]] uint32_t findMemoryTypeIndex(const uint32_t &memoryTypeBits,
-                                               const vk::MemoryPropertyFlags &properties);
-
     [[nodiscard]] vk::ImageMemoryBarrier getImagePipelineBarrier(
             const vk::AccessFlags srcAccessFlags, const vk::AccessFlags dstAccessFlags,
             const vk::ImageLayout &oldLayout, const vk::ImageLayout &newLayout, const vk::Image &image) const;
-
-    [[nodiscard]] VulkanImage createImage(const vk::Format &format,
-                                          const vk::Flags<vk::ImageUsageFlagBits> &usageFlagBits);
-
-    void destroyImage(const VulkanImage &image) const;
 
     [[nodiscard]] VulkanBuffer createBuffer(const vk::DeviceSize &size, const vk::Flags<vk::BufferUsageFlagBits> &usage,
                                             const vk::Flags<vk::MemoryPropertyFlagBits> &memoryProperty);

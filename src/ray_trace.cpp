@@ -38,10 +38,57 @@ void ray_trace(
 
     auto physical_device = vulkan::pick_physical_device(instance, Vulkan::get_required_device_extensions());
 
+    auto [compute_queue_family, present_queue_family] = vulkan::find_queue_family(physical_device, surface);
+
+    auto [device, compute_queue, present_queue] = vulkan::create_device(instance, physical_device, compute_queue_family, present_queue_family, Vulkan::get_required_device_extensions());
+
+    auto command_pool = device.createCommandPool({ .queueFamilyIndex = compute_queue_family });
+
+    auto surface_capabilities = physical_device.getSurfaceCapabilitiesKHR(surface);
+    auto swapchain_extent = surface_capabilities.currentExtent;
+    if (UINT32_MAX == swapchain_extent.width) {
+        swapchain_extent.width = settings.windowWidth;
+        swapchain_extent.height = settings.windowHeight;
+    }
+    const vk::Format format = vk::Format::eR8G8B8A8Unorm;
+    const vk::ColorSpaceKHR color_space = vk::ColorSpaceKHR::eSrgbNonlinear;
+    vk::PresentModeKHR present_mode = vk::PresentModeKHR::eImmediate;
+    auto swapchain = vulkan::create_swapchain(physical_device, surface, device,
+        surface_capabilities.minImageCount, format, color_space, present_mode, swapchain_extent, surface_capabilities.currentTransform);
+
+    auto swapchain_images = device.getSwapchainImagesKHR(swapchain);
+    std::vector<vk::ImageView> swapchain_image_views(swapchain_images.size());
+    std::ranges::transform(swapchain_images, swapchain_image_views.begin(),
+        [device, format](auto swapChainImage) {
+            return device.createImageView(
+                {
+                        .image = swapChainImage,
+                        .viewType = vk::ImageViewType::e2D,
+                        .format = format,
+                        .subresourceRange = {
+                                .aspectMask = vk::ImageAspectFlagBits::eColor,
+                                .baseMipLevel = 0,
+                                .levelCount = 1,
+                                .baseArrayLayer = 0,
+                                .layerCount = 1
+                        }
+                });
+        }
+    );
+
+    vk::PhysicalDeviceMemoryProperties memory_properties = physical_device.getMemoryProperties();
+
+    auto [render_target_image, summed_image] = vulkan::create_images(device, vk::Extent3D{ swapchain_extent.width, swapchain_extent.height, 1 }, memory_properties);
 
     while (!view_window.should_close()) {
-        Vulkan vulkan(instance, surface, physical_device,
-            vulkan::find_queue_family(physical_device, surface),
+        Vulkan vulkan(
+            instance, surface,
+            physical_device, memory_properties,
+            device, compute_queue, present_queue,
+            {compute_queue_family, present_queue_family},
+            command_pool,
+            swapchain,swapchain_images, swapchain_image_views,swapchain_extent,
+            render_target_image, summed_image,
             settings, generateRandomScene()
         );
 
@@ -84,6 +131,14 @@ void ray_trace(
         view_window.poll_events();
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
+
+    vulkan::destroy_image(device, render_target_image);
+    vulkan::destroy_image(device, summed_image);
+
+    std::ranges::for_each(swapchain_image_views, [device](auto swapChainImageView) {device.destroyImageView(swapChainImageView); });
+    device.destroySwapchainKHR(swapchain);
+    device.destroyCommandPool(command_pool);
+    device.destroy();
     instance.destroySurfaceKHR(surface);
     instance.destroy();
 }
