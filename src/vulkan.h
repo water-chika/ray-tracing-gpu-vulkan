@@ -384,6 +384,73 @@ namespace vulkan {
             memory_properties);
         return aabbBuffer;
     }
+
+    inline auto createBottomAccelerationStructure(vk::Device device, VulkanBuffer& aabbBuffer, uint32_t max_primitive_count,
+        vk::AccelerationStructureGeometryKHR& geometry,
+        const vk::PhysicalDeviceMemoryProperties& memory_properties, vk::detail::DispatchLoaderDynamic& dynamicDispatchLoader) {
+
+        geometry.geometry.aabbs.sType = vk::StructureType::eAccelerationStructureGeometryAabbsDataKHR;
+        geometry.geometry.aabbs.stride = sizeof(vk::AabbPositionsKHR);
+        geometry.geometry.aabbs.data.deviceAddress = device.getBufferAddress({ .buffer = aabbBuffer.buffer });
+
+
+        vk::AccelerationStructureBuildGeometryInfoKHR buildInfo = {
+                .type = vk::AccelerationStructureTypeKHR::eBottomLevel,
+                .flags = vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace,
+                .mode = vk::BuildAccelerationStructureModeKHR::eBuild,
+                .srcAccelerationStructure = nullptr,
+                .dstAccelerationStructure = nullptr,
+                .geometryCount = 1,
+                .pGeometries = &geometry,
+                .scratchData = {}
+        };
+
+
+        // CALCULATE REQUIRED SIZE FOR THE ACCELERATION STRUCTURE
+        std::vector<uint32_t> maxPrimitiveCounts = { max_primitive_count };
+
+        vk::AccelerationStructureBuildSizesInfoKHR buildSizesInfo = device.getAccelerationStructureBuildSizesKHR(
+            vk::AccelerationStructureBuildTypeKHR::eDevice, buildInfo, maxPrimitiveCounts, dynamicDispatchLoader);
+
+
+        // ALLOCATE BUFFERS FOR ACCELERATION STRUCTURE
+        VulkanAccelerationStructure bottomAccelerationStructure{};
+
+        bottomAccelerationStructure.structureBuffer = vulkan::create_buffer(device, buildSizesInfo.accelerationStructureSize,
+            vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR |
+            vk::BufferUsageFlagBits::eShaderDeviceAddress,
+            vk::MemoryPropertyFlagBits::eDeviceLocal, memory_properties);
+
+        bottomAccelerationStructure.scratchBuffer = vulkan::create_buffer(device, buildSizesInfo.buildScratchSize,
+            vk::BufferUsageFlagBits::eStorageBuffer |
+            vk::BufferUsageFlagBits::eShaderDeviceAddress,
+            vk::MemoryPropertyFlagBits::eDeviceLocal, memory_properties);
+
+        // CREATE THE ACCELERATION STRUCTURE
+        vk::AccelerationStructureCreateInfoKHR createInfo = {
+                .buffer = bottomAccelerationStructure.structureBuffer.buffer,
+                .offset = 0,
+                .size = buildSizesInfo.accelerationStructureSize,
+                .type = vk::AccelerationStructureTypeKHR::eBottomLevel
+        };
+
+        bottomAccelerationStructure.accelerationStructure =
+            device.createAccelerationStructureKHR(createInfo, nullptr, dynamicDispatchLoader);
+
+
+        // FILL IN THE REMAINING META INFO
+        buildInfo.dstAccelerationStructure = bottomAccelerationStructure.accelerationStructure;
+        buildInfo.scratchData.deviceAddress =
+            device.getBufferAddress({ .buffer = bottomAccelerationStructure.scratchBuffer.buffer });
+        return std::tuple{ bottomAccelerationStructure, buildInfo};
+    }
+
+    inline void destroy_acceleration_structure(vk::Device device, const VulkanAccelerationStructure& accelerationStructure, vk::detail::DispatchLoaderDynamic& dynamicDispatchLoader) {
+        device.destroyAccelerationStructureKHR(accelerationStructure.accelerationStructure, nullptr, dynamicDispatchLoader);
+        vulkan::destroy_buffer(device, accelerationStructure.structureBuffer);
+        vulkan::destroy_buffer(device, accelerationStructure.scratchBuffer);
+        vulkan::destroy_buffer(device, accelerationStructure.instancesBuffer);
+    }
 }
 
 
@@ -401,6 +468,7 @@ public:
         auto fences,
         auto next_image_semaphores, auto render_image_semaphores,
         auto& aabbs, VulkanBuffer& aabb_buffer,
+        VulkanAccelerationStructure bottom_accel, vk::AccelerationStructureBuildGeometryInfoKHR bottom_accel_build_info,
         VulkanSettings settings, Scene scene) :
         instance{instance}, surface{surface},
         physicalDevice{ physical_device }, m_memory_properties{memory_properties},
@@ -412,6 +480,7 @@ public:
         m_fences{fences},
         m_next_image_semaphores{ next_image_semaphores }, m_render_image_semaphores{ render_image_semaphores },
         aabbs{aabbs}, aabbBuffer{ aabb_buffer },
+        bottomAccelerationStructure{bottom_accel},
         settings(settings), scene(scene),
         m_width(settings.windowWidth), m_height(settings.windowHeight)
     {
@@ -449,7 +518,21 @@ public:
         memcpy(data, aabbs.data(), aabbs_buffer_size);
         device.unmapMemory(aabbBuffer.memory);
 
-        createBottomAccelerationStructure();
+
+        // BUILD THE ACCELERATION STRUCTURE
+        vk::AccelerationStructureBuildRangeInfoKHR buildRangeInfo = {
+                .primitiveCount = static_cast<uint32_t>(aabbs.size()),
+                .primitiveOffset = 0,
+                .firstVertex = 0,
+                .transformOffset = 0
+        };
+
+        const vk::AccelerationStructureBuildRangeInfoKHR* pBuildRangeInfos[] = { &buildRangeInfo };
+
+        executeSingleTimeCommand([&](const vk::CommandBuffer& singleTimeCommandBuffer) {
+            singleTimeCommandBuffer.buildAccelerationStructuresKHR(1, &bottom_accel_build_info, pBuildRangeInfos, dynamicDispatchLoader);
+            });
+
         createTopAccelerationStructure();
 
         createSphereBuffer();
@@ -592,8 +675,6 @@ private:
             const vk::ImageLayout &oldLayout, const vk::ImageLayout &newLayout, const vk::Image &image) const;
 
     void executeSingleTimeCommand(const std::function<void(const vk::CommandBuffer &singleTimeCommandBuffer)> &c);
-
-    void createBottomAccelerationStructure();
 
     void createTopAccelerationStructure();
 

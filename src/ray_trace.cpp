@@ -91,6 +91,15 @@ void ray_trace(
 
     auto aabb_buffer = vulkan::create_aabb_buffer(device, aabbs.size(), memory_properties);
 
+    auto dynamicDispatchLoader = vk::detail::DispatchLoaderDynamic(instance, vkGetInstanceProcAddr, device);
+
+    // ACCELERATION STRUCTURE META INFO
+    vk::AccelerationStructureGeometryKHR geometry = {
+            .geometryType = vk::GeometryTypeKHR::eAabbs,
+            .flags = vk::GeometryFlagBitsKHR::eOpaque
+    };
+    auto [bottom_accel, bottom_accel_build_info] = vulkan::createBottomAccelerationStructure(device, aabb_buffer, aabbs.size(), geometry, memory_properties, dynamicDispatchLoader);
+
     while (!view_window.should_close()) {
         scene = generateRandomScene();
         std::ranges::transform(
@@ -121,6 +130,7 @@ void ray_trace(
             fences,
             next_image_semaphores, render_image_semaphores,
             aabbs, aabb_buffer,
+            bottom_accel, bottom_accel_build_info,
             settings, scene
         );
 
@@ -163,6 +173,8 @@ void ray_trace(
         view_window.poll_events();
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
+
+    vulkan::destroy_acceleration_structure(device, bottom_accel, dynamicDispatchLoader);
 
     vulkan::destroy_buffer(device, aabb_buffer);
 

@@ -16,7 +16,6 @@ Vulkan::~Vulkan() {
     device.destroyDescriptorPool(rtDescriptorPool);
 
     destroyAccelerationStructure(topAccelerationStructure);
-    destroyAccelerationStructure(bottomAccelerationStructure);
 
     vulkan::destroy_buffer(device, sphereBuffer);
     vulkan::destroy_buffer(device, shaderBindingTableBuffer);
@@ -512,80 +511,7 @@ void Vulkan::executeSingleTimeCommand(const std::function<void(const vk::Command
     device.freeCommandBuffers(commandPool, singleTimeCommandBuffer);
 }
 
-void Vulkan::createBottomAccelerationStructure() {
-    // ACCELERATION STRUCTURE META INFO
-    vk::AccelerationStructureGeometryKHR geometry = {
-            .geometryType = vk::GeometryTypeKHR::eAabbs,
-            .flags = vk::GeometryFlagBitsKHR::eOpaque
-    };
 
-    geometry.geometry.aabbs.sType = vk::StructureType::eAccelerationStructureGeometryAabbsDataKHR;
-    geometry.geometry.aabbs.stride = sizeof(vk::AabbPositionsKHR);
-    geometry.geometry.aabbs.data.deviceAddress = device.getBufferAddress({.buffer = aabbBuffer.buffer});
-
-
-    vk::AccelerationStructureBuildGeometryInfoKHR buildInfo = {
-            .type = vk::AccelerationStructureTypeKHR::eBottomLevel,
-            .flags = vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace,
-            .mode = vk::BuildAccelerationStructureModeKHR::eBuild,
-            .srcAccelerationStructure = nullptr,
-            .dstAccelerationStructure = nullptr,
-            .geometryCount = 1,
-            .pGeometries = &geometry,
-            .scratchData = {}
-    };
-
-
-    // CALCULATE REQUIRED SIZE FOR THE ACCELERATION STRUCTURE
-    std::vector<uint32_t> maxPrimitiveCounts = {static_cast<uint32_t>(aabbs.size())};
-
-    vk::AccelerationStructureBuildSizesInfoKHR buildSizesInfo = device.getAccelerationStructureBuildSizesKHR(
-            vk::AccelerationStructureBuildTypeKHR::eDevice, buildInfo, maxPrimitiveCounts, dynamicDispatchLoader);
-
-
-    // ALLOCATE BUFFERS FOR ACCELERATION STRUCTURE
-    bottomAccelerationStructure.structureBuffer = vulkan::create_buffer(device, buildSizesInfo.accelerationStructureSize,
-                                                               vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR |
-        vk::BufferUsageFlagBits::eShaderDeviceAddress,
-                                                               vk::MemoryPropertyFlagBits::eDeviceLocal, m_memory_properties);
-
-    bottomAccelerationStructure.scratchBuffer = vulkan::create_buffer(device, buildSizesInfo.buildScratchSize,
-                                                             vk::BufferUsageFlagBits::eStorageBuffer |
-                                                             vk::BufferUsageFlagBits::eShaderDeviceAddress,
-                                                             vk::MemoryPropertyFlagBits::eDeviceLocal, m_memory_properties);
-
-    // CREATE THE ACCELERATION STRUCTURE
-    vk::AccelerationStructureCreateInfoKHR createInfo = {
-            .buffer = bottomAccelerationStructure.structureBuffer.buffer,
-            .offset = 0,
-            .size = buildSizesInfo.accelerationStructureSize,
-            .type = vk::AccelerationStructureTypeKHR::eBottomLevel
-    };
-
-    bottomAccelerationStructure.accelerationStructure =
-            device.createAccelerationStructureKHR(createInfo, nullptr, dynamicDispatchLoader);
-
-
-    // FILL IN THE REMAINING META INFO
-    buildInfo.dstAccelerationStructure = bottomAccelerationStructure.accelerationStructure;
-    buildInfo.scratchData.deviceAddress =
-            device.getBufferAddress({.buffer = bottomAccelerationStructure.scratchBuffer.buffer});
-
-
-    // BUILD THE ACCELERATION STRUCTURE
-    vk::AccelerationStructureBuildRangeInfoKHR buildRangeInfo = {
-            .primitiveCount = static_cast<uint32_t>(aabbs.size()),
-            .primitiveOffset = 0,
-            .firstVertex = 0,
-            .transformOffset = 0
-    };
-
-    const vk::AccelerationStructureBuildRangeInfoKHR* pBuildRangeInfos[] = {&buildRangeInfo};
-
-    executeSingleTimeCommand([&](const vk::CommandBuffer &singleTimeCommandBuffer) {
-        singleTimeCommandBuffer.buildAccelerationStructuresKHR(1, &buildInfo, pBuildRangeInfos, dynamicDispatchLoader);
-    });
-}
 
 void Vulkan::createTopAccelerationStructure() {
     // ACCELERATION STRUCTURE META INFO
