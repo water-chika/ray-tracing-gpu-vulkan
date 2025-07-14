@@ -2,6 +2,8 @@
 
 #include <thread>
 
+#include "window.hpp"
+
 extern "C"
 __declspec(dllexport)
 void ray_trace(
@@ -12,6 +14,7 @@ void ray_trace(
     uint32_t height
 ) {
 
+    window view_window{ width, height };
 
     // SETUP
     VulkanSettings settings = {
@@ -19,7 +22,23 @@ void ray_trace(
         .windowHeight = height
     };
 
-    Vulkan vulkan(settings, generateRandomScene());
+
+    std::vector<const char*> required_extensions;
+
+    auto window_required_extensions = view_window.get_required_extensions();
+
+    required_extensions.insert(required_extensions.end(), window_required_extensions.begin(), window_required_extensions.end());
+    auto ray_trace_required_extensions = Vulkan::get_required_instance_extensions();
+    required_extensions.insert(required_extensions.end(), ray_trace_required_extensions.begin(),
+        ray_trace_required_extensions.end());
+
+    auto instance = vulkan::create_instance(required_extensions);
+
+    auto surface = view_window.create_surface(instance);
+
+
+    Vulkan vulkan(instance, surface, settings, generateRandomScene()
+        );
 
     // RENDERING
     std::cout << "Rendering started: " << samples << " samples with "
@@ -42,8 +61,8 @@ void ray_trace(
 
         vulkan.render(renderCallInfo);
 
-        vulkan.update();
-        if (vulkan.shouldExit()) {
+        view_window.poll_events();
+        if (view_window.should_close()) {
             break;
         }
     }
@@ -62,8 +81,10 @@ void ray_trace(
     }
 
     // WINDOW
-    while (!vulkan.shouldExit()) {
-        vulkan.update();
+    while (!view_window.should_close()) {
+        view_window.poll_events();
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
+    instance.destroySurfaceKHR(surface);
+    instance.destroy();
 }

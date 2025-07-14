@@ -9,49 +9,6 @@
 #include <algorithm>
 #include <numeric>
 
-Vulkan::Vulkan(VulkanSettings settings, Scene scene) :
-        settings(settings), scene(scene), window(nullptr),
-        m_width(settings.windowWidth), m_height(settings.windowHeight)
-{
-
-    aabbs.reserve(scene.sphereAmount);
-    for (int i = 0; i < scene.sphereAmount; i++) {
-        aabbs.push_back(getAABBFromSphere(scene.spheres[i].geometry));
-    }
-
-    createWindow();
-    createInstance();
-    createSurface();
-    pickPhysicalDevice();
-    findQueueFamilies();
-    createLogicalDevice();
-
-    dynamicDispatchLoader = vk::detail::DispatchLoaderDynamic(instance, vkGetInstanceProcAddr, device);
-
-    createCommandPool();
-    createSwapChain();
-    createImages();
-
-    createAABBBuffer();
-    createBottomAccelerationStructure();
-    createTopAccelerationStructure();
-
-    createSphereBuffer();
-    createRenderCallInfoBuffer();
-
-    createDescriptorSetLayout();
-    createDescriptorPool();
-    createDescriptorSet();
-    createPipelineLayout();
-    createRTPipeline();
-
-    createShaderBindingTable();
-    createCommandBuffer();
-
-    createFence();
-    createSemaphore();
-}
-
 Vulkan::~Vulkan() {
     std::ranges::for_each(m_next_image_semaphores, [this](auto semaphore) {device.destroySemaphore(semaphore); });
     std::ranges::for_each(m_render_image_semaphores, [this](auto semaphore) { device.destroySemaphore(semaphore); });
@@ -82,29 +39,14 @@ Vulkan::~Vulkan() {
     destroyImage(summedPixelColorImage);
 
     device.destroy();
-    instance.destroySurfaceKHR(surface);
-    instance.destroy();
-
-    glfwDestroyWindow(window);
-    glfwTerminate();
 }
 
-void Vulkan::update() {
-    glfwPollEvents();
-}
 
 void Vulkan::wait_render_complete() {
     device.waitIdle();
 }
 
 void Vulkan::render(const RenderCallInfo& renderCallInfo) {
-    if (is_window_minimized()) {
-        device.waitForFences(1, &m_fences[0], true, UINT64_MAX);
-        device.resetFences(m_fences[0]);
-        updateRenderCallInfoBuffer(renderCallInfo, 0);
-        computeQueue.submit(vk::SubmitInfo{}.setCommandBuffers(commandBuffersForNoPresent[0]), m_fences[0]);
-        return;
-    }
     uint32_t swapChainImageIndex = 0;
     auto acquire_image_semaphore = get_acquire_image_semaphore();
     if (auto [result, index] = device.acquireNextImageKHR(swapChain, UINT64_MAX, acquire_image_semaphore);
@@ -149,64 +91,6 @@ void Vulkan::render(const RenderCallInfo& renderCallInfo) {
     };
 
     presentQueue.presentKHR(presentInfo);
-}
-
-bool Vulkan::shouldExit() const {
-    return glfwWindowShouldClose(window);
-}
-
-std::map<GLFWwindow*, Vulkan*> Vulkan::m_window_this{};
-void Vulkan::window_size_callback(GLFWwindow* window, int width, int height) {
-    m_window_this[window]->size_changed(width, height);
-}
-
-void Vulkan::createWindow() {
-    glfwInit();
-
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    window = glfwCreateWindow(settings.windowWidth, settings.windowHeight, "GPU Ray Tracing (Vulkan)",
-                              nullptr, nullptr);
-    m_window_this.emplace(window, this);
-    glfwSetWindowSizeCallback(window, window_size_callback);
-}
-
-void Vulkan::createInstance() {
-    vk::ApplicationInfo applicationInfo = {
-            .pApplicationName = "Ray Tracing (Vulkan)",
-            .applicationVersion = 1,
-            .pEngineName = "Ray Tracing (Vulkan)",
-            .engineVersion = 1,
-            .apiVersion = VK_API_VERSION_1_3
-    };
-
-    std::vector<const char*> enabledExtensions;
-
-    uint32_t windowExtensionCount;
-    const char** windowExtensions = glfwGetRequiredInstanceExtensions(&windowExtensionCount);
-
-    enabledExtensions.insert(enabledExtensions.end(), windowExtensions, windowExtensions + windowExtensionCount);
-    enabledExtensions.insert(enabledExtensions.end(), requiredInstanceExtensions.begin(),
-                             requiredInstanceExtensions.end());
-
-    std::vector<const char*> enabledLayers ={ };
-
-    vk::InstanceCreateInfo instanceCreateInfo = {
-            .pApplicationInfo = &applicationInfo,
-            .enabledLayerCount = static_cast<uint32_t>(enabledLayers.size()),
-            .ppEnabledLayerNames = enabledLayers.data(),
-            .enabledExtensionCount = static_cast<uint32_t>(enabledExtensions.size()),
-            .ppEnabledExtensionNames = enabledExtensions.data(),
-    };
-
-#ifndef _DEBUG
-    instanceCreateInfo.pNext = nullptr;
-#endif
-
-    instance = vk::createInstance(instanceCreateInfo);
-}
-
-void Vulkan::createSurface() {
-    glfwCreateWindowSurface(instance, window, nullptr, reinterpret_cast<VkSurfaceKHR*>(&surface));
 }
 
 void Vulkan::pickPhysicalDevice() {

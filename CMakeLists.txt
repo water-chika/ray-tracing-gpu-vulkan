@@ -15,6 +15,7 @@ add_library(
         ray_trace SHARED
         src/ray_trace.cpp
         src/ray_trace.h
+        src/window.hpp
         src/vulkan_settings.h
         src/vulkan.h
         src/vulkan.cpp

@@ -5,7 +5,7 @@
 #define VKFW_NO_STRUCT_CONSTRUCTORS
 
 #include <vulkan/vulkan.hpp>
-#include <GLFW/glfw3.h>
+
 #include <functional>
 #include "vulkan_settings.h"
 #include "scene.h"
@@ -32,23 +32,96 @@ struct VulkanAccelerationStructure {
     VulkanBuffer instancesBuffer;
 };
 
+namespace vulkan {
+    vk::Instance create_instance(const auto& extensions) {
+        vk::ApplicationInfo applicationInfo = {
+        .pApplicationName = "Ray Tracing (Vulkan)",
+        .applicationVersion = 1,
+        .pEngineName = "Ray Tracing (Vulkan)",
+        .engineVersion = 1,
+        .apiVersion = VK_API_VERSION_1_3
+        };
+
+
+
+        std::vector<const char*> enabledLayers = { };
+
+        vk::InstanceCreateInfo instanceCreateInfo = {
+                .pApplicationInfo = &applicationInfo,
+                .enabledLayerCount = static_cast<uint32_t>(enabledLayers.size()),
+                .ppEnabledLayerNames = enabledLayers.data(),
+                .enabledExtensionCount = static_cast<uint32_t>(extensions.size()),
+                .ppEnabledExtensionNames = extensions.data(),
+        };
+
+#ifndef _DEBUG
+        instanceCreateInfo.pNext = nullptr;
+#endif
+
+        return vk::createInstance(instanceCreateInfo);
+    }
+
+}
+
 
 class Vulkan {
 public:
-    Vulkan(VulkanSettings settings, Scene scene);
+    Vulkan(vk::Instance instance, vk::SurfaceKHR surface, VulkanSettings settings, Scene scene) :
+        instance{instance}, surface{surface},
+        settings(settings), scene(scene),
+        m_width(settings.windowWidth), m_height(settings.windowHeight)
+    {
+
+        aabbs.reserve(scene.sphereAmount);
+        for (int i = 0; i < scene.sphereAmount; i++) {
+            aabbs.push_back(getAABBFromSphere(scene.spheres[i].geometry));
+        }
+
+        pickPhysicalDevice();
+        findQueueFamilies();
+        createLogicalDevice();
+
+        dynamicDispatchLoader = vk::detail::DispatchLoaderDynamic(instance, vkGetInstanceProcAddr, device);
+
+        createCommandPool();
+        createSwapChain();
+        createImages();
+
+        createAABBBuffer();
+        createBottomAccelerationStructure();
+        createTopAccelerationStructure();
+
+        createSphereBuffer();
+        createRenderCallInfoBuffer();
+
+        createDescriptorSetLayout();
+        createDescriptorPool();
+        createDescriptorSet();
+        createPipelineLayout();
+        createRTPipeline();
+
+        createShaderBindingTable();
+        createCommandBuffer();
+
+        createFence();
+        createSemaphore();
+    }
 
     ~Vulkan();
 
-    void update();
+    static auto get_required_instance_extensions() {
+        const std::vector<const char*> requiredInstanceExtensions = {
+            VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
+            VK_EXT_DEBUG_UTILS_EXTENSION_NAME,
+        };
+        return requiredInstanceExtensions;
+    }
 
     void render(const RenderCallInfo &renderCallInfo);
 
     void wait_render_complete();
 
     void write_to_file(std::filesystem::path path);
-
-    [[nodiscard]] bool shouldExit() const;
-
 
 private:
     VulkanSettings settings;
@@ -60,10 +133,6 @@ private:
     const vk::ColorSpaceKHR colorSpace = vk::ColorSpaceKHR::eSrgbNonlinear;
     vk::PresentModeKHR presentMode = vk::PresentModeKHR::eImmediate;
 
-    const std::vector<const char*> requiredInstanceExtensions = {
-            VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
-            VK_EXT_DEBUG_UTILS_EXTENSION_NAME,
-    };
 
     const std::vector<const char*> requiredDeviceExtensions = {
             VK_KHR_SWAPCHAIN_EXTENSION_NAME,
@@ -78,7 +147,6 @@ private:
     };
 
 
-    GLFWwindow* window;
     vk::Instance instance;
     vk::SurfaceKHR surface;
     vk::PhysicalDevice physicalDevice;
@@ -145,21 +213,9 @@ private:
     int m_width;
     int m_height;
 
-    void createWindow();
-
-    static std::map<GLFWwindow*, Vulkan*> m_window_this;
-    static void window_size_callback(GLFWwindow* window, int width, int height);
-    void size_changed(int width, int height) {
-        m_width = width;
-        m_height = height;
+    void createSurface(auto&& create_surface) {
+        surface = create_surface(instance);
     }
-    bool is_window_minimized() {
-        return m_width == 0 || m_height == 0;
-    }
-
-    void createInstance();
-
-    void createSurface();
 
     void pickPhysicalDevice();
 
