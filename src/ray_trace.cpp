@@ -80,7 +80,36 @@ void ray_trace(
 
     auto [render_target_image, summed_image] = vulkan::create_images(device, vk::Extent3D{ swapchain_extent.width, swapchain_extent.height, 1 }, memory_properties);
 
+    auto fences = vulkan::create_fences(device, swapchain_images.size());
+
+    auto next_image_semaphores = vulkan::create_semaphores(device, swapchain_images.size() + 1);
+    auto render_image_semaphores = vulkan::create_semaphores(device, swapchain_images.size());
+
+    auto scene = generateRandomScene();
+
+    std::vector<vk::AabbPositionsKHR> aabbs(scene.sphereAmount);
+
+    auto aabb_buffer = vulkan::create_aabb_buffer(device, aabbs.size(), memory_properties);
+
     while (!view_window.should_close()) {
+        scene = generateRandomScene();
+        std::ranges::transform(
+            std::span{ scene.spheres, scene.sphereAmount },
+            aabbs.begin(),
+            [](auto& sphere) {
+                auto getAABBFromSphere = [](const glm::vec4& geometry) {
+                    return vk::AabbPositionsKHR{
+                            .minX = geometry.x - geometry.w,
+                            .minY = geometry.y - geometry.w,
+                            .minZ = geometry.z - geometry.w,
+                            .maxX = geometry.x + geometry.w,
+                            .maxY = geometry.y + geometry.w,
+                            .maxZ = geometry.z + geometry.w
+                    };
+                    };
+                return getAABBFromSphere(sphere.geometry);
+            }
+        );
         Vulkan vulkan(
             instance, surface,
             physical_device, memory_properties,
@@ -89,7 +118,10 @@ void ray_trace(
             command_pool,
             swapchain,swapchain_images, swapchain_image_views,swapchain_extent,
             render_target_image, summed_image,
-            settings, generateRandomScene()
+            fences,
+            next_image_semaphores, render_image_semaphores,
+            aabbs, aabb_buffer,
+            settings, scene
         );
 
         // RENDERING
@@ -131,6 +163,12 @@ void ray_trace(
         view_window.poll_events();
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
+
+    vulkan::destroy_buffer(device, aabb_buffer);
+
+    std::ranges::for_each(next_image_semaphores, [device](auto semaphore) {device.destroySemaphore(semaphore); });
+    std::ranges::for_each(render_image_semaphores, [device](auto semaphore) {device.destroySemaphore(semaphore); });
+    std::ranges::for_each(fences, [device](auto fence) {device.destroyFence(fence); });
 
     vulkan::destroy_image(device, render_target_image);
     vulkan::destroy_image(device, summed_image);

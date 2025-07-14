@@ -10,10 +10,6 @@
 #include <numeric>
 
 Vulkan::~Vulkan() {
-    std::ranges::for_each(m_next_image_semaphores, [this](auto semaphore) {device.destroySemaphore(semaphore); });
-    std::ranges::for_each(m_render_image_semaphores, [this](auto semaphore) { device.destroySemaphore(semaphore); });
-    std::ranges::for_each(m_fences, [this](auto fence) { device.destroyFence(fence); });
-
     device.destroyPipeline(rtPipeline);
     device.destroyPipelineLayout(rtPipelineLayout);
     device.destroyDescriptorSetLayout(rtDescriptorSetLayout);
@@ -22,13 +18,12 @@ Vulkan::~Vulkan() {
     destroyAccelerationStructure(topAccelerationStructure);
     destroyAccelerationStructure(bottomAccelerationStructure);
 
-    destroyBuffer(sphereBuffer);
-    destroyBuffer(aabbBuffer);
-    destroyBuffer(shaderBindingTableBuffer);
+    vulkan::destroy_buffer(device, sphereBuffer);
+    vulkan::destroy_buffer(device, shaderBindingTableBuffer);
     std::ranges::for_each(
         renderCallInfoBuffers,
         [this](auto buffer) {
-            destroyBuffer(buffer);
+            vulkan::destroy_buffer(device, buffer);
         });
 }
 
@@ -461,36 +456,6 @@ void Vulkan::createCommandBuffer() {
     );
 }
 
-void Vulkan::createFence() {
-    m_fences.resize(swapChainImages.size());
-    std::ranges::transform(
-        swapChainImages,
-        m_fences.begin(),
-        [this](auto image) {
-            return device.createFence(vk::FenceCreateInfo{}.setFlags(vk::FenceCreateFlagBits::eSignaled));
-        }
-    );
-}
-
-void Vulkan::createSemaphore() {
-    m_next_image_semaphores.resize(swapChainImages.size()+1);
-    std::ranges::for_each(m_next_image_semaphores, [this](auto& semaphore) {
-        semaphore = device.createSemaphore({});
-        });
-    m_next_image_semaphores_indices.resize(swapChainImages.size());
-    std::iota(m_next_image_semaphores_indices.begin(),m_next_image_semaphores_indices.end(), 0);
-    m_next_image_free_semaphore_index = swapChainImages.size();
-
-    m_render_image_semaphores.resize(swapChainImages.size());
-    std::ranges::transform(swapChainImages,
-        m_render_image_semaphores.begin(),
-        [this](auto image) {
-        return device.createSemaphore({});
-        });
-}
-
-
-
 vk::ImageMemoryBarrier Vulkan::getImagePipelineBarrier(
         const vk::AccessFlags srcAccessFlags, const vk::AccessFlags dstAccessFlags,
         const vk::ImageLayout &oldLayout, const vk::ImageLayout &newLayout,
@@ -514,43 +479,6 @@ vk::ImageMemoryBarrier Vulkan::getImagePipelineBarrier(
     };
 }
 
-
-VulkanBuffer Vulkan::createBuffer(const vk::DeviceSize &size, const vk::Flags<vk::BufferUsageFlagBits> &usage,
-                                  const vk::Flags<vk::MemoryPropertyFlagBits> &memoryProperty) {
-    vk::BufferCreateInfo bufferCreateInfo = {
-            .size = size,
-            .usage = usage,
-            .sharingMode = vk::SharingMode::eExclusive
-    };
-
-    vk::Buffer buffer = device.createBuffer(bufferCreateInfo);
-
-    vk::MemoryRequirements memoryRequirements = device.getBufferMemoryRequirements(buffer);
-
-    vk::MemoryAllocateFlagsInfo allocateFlagsInfo = {
-            .flags = vk::MemoryAllocateFlagBits::eDeviceAddress
-    };
-
-    vk::MemoryAllocateInfo allocateInfo = {
-            .pNext = &allocateFlagsInfo,
-            .allocationSize = memoryRequirements.size,
-            .memoryTypeIndex = vulkan::findMemoryTypeIndex(m_memory_properties,memoryRequirements.memoryTypeBits, memoryProperty)
-    };
-
-    vk::DeviceMemory memory = device.allocateMemory(allocateInfo);
-
-    device.bindBufferMemory(buffer, memory, 0);
-
-    return {
-            .buffer = buffer,
-            .memory = memory,
-    };
-}
-
-void Vulkan::destroyBuffer(const VulkanBuffer &buffer) const {
-    device.destroyBuffer(buffer.buffer);
-    device.freeMemory(buffer.memory);
-}
 
 void Vulkan::executeSingleTimeCommand(const std::function<void(const vk::CommandBuffer &singleTimeCommandBuffer)> &c) {
     vk::CommandBuffer singleTimeCommandBuffer = device.allocateCommandBuffers(
@@ -582,21 +510,6 @@ void Vulkan::executeSingleTimeCommand(const std::function<void(const vk::Command
 
     device.destroyFence(f);
     device.freeCommandBuffers(commandPool, singleTimeCommandBuffer);
-}
-
-void Vulkan::createAABBBuffer() {
-    const vk::DeviceSize bufferSize = sizeof(vk::AabbPositionsKHR) * aabbs.size();
-
-    aabbBuffer = createBuffer(bufferSize,
-                              vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR |
-                              vk::BufferUsageFlagBits::eShaderDeviceAddress,
-                              vk::MemoryPropertyFlagBits::eHostVisible |
-                              vk::MemoryPropertyFlagBits::eHostCoherent |
-                              vk::MemoryPropertyFlagBits::eDeviceLocal);
-
-    void* data = device.mapMemory(aabbBuffer.memory, 0, bufferSize);
-    memcpy(data, aabbs.data(), bufferSize);
-    device.unmapMemory(aabbBuffer.memory);
 }
 
 void Vulkan::createBottomAccelerationStructure() {
@@ -631,15 +544,15 @@ void Vulkan::createBottomAccelerationStructure() {
 
 
     // ALLOCATE BUFFERS FOR ACCELERATION STRUCTURE
-    bottomAccelerationStructure.structureBuffer = createBuffer(buildSizesInfo.accelerationStructureSize,
+    bottomAccelerationStructure.structureBuffer = vulkan::create_buffer(device, buildSizesInfo.accelerationStructureSize,
                                                                vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR |
         vk::BufferUsageFlagBits::eShaderDeviceAddress,
-                                                               vk::MemoryPropertyFlagBits::eDeviceLocal);
+                                                               vk::MemoryPropertyFlagBits::eDeviceLocal, m_memory_properties);
 
-    bottomAccelerationStructure.scratchBuffer = createBuffer(buildSizesInfo.buildScratchSize,
+    bottomAccelerationStructure.scratchBuffer = vulkan::create_buffer(device, buildSizesInfo.buildScratchSize,
                                                              vk::BufferUsageFlagBits::eStorageBuffer |
                                                              vk::BufferUsageFlagBits::eShaderDeviceAddress,
-                                                             vk::MemoryPropertyFlagBits::eDeviceLocal);
+                                                             vk::MemoryPropertyFlagBits::eDeviceLocal, m_memory_properties);
 
     // CREATE THE ACCELERATION STRUCTURE
     vk::AccelerationStructureCreateInfoKHR createInfo = {
@@ -703,14 +616,14 @@ void Vulkan::createTopAccelerationStructure() {
 
 
     // ALLOCATE BUFFERS FOR ACCELERATION STRUCTURE
-    topAccelerationStructure.structureBuffer = createBuffer(buildSizesInfo.accelerationStructureSize,
+    topAccelerationStructure.structureBuffer = vulkan::create_buffer(device,buildSizesInfo.accelerationStructureSize,
                                                             vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR,
-                                                            vk::MemoryPropertyFlagBits::eDeviceLocal);
+                                                            vk::MemoryPropertyFlagBits::eDeviceLocal, m_memory_properties);
 
-    topAccelerationStructure.scratchBuffer = createBuffer(buildSizesInfo.buildScratchSize,
+    topAccelerationStructure.scratchBuffer = vulkan::create_buffer(device, buildSizesInfo.buildScratchSize,
                                                           vk::BufferUsageFlagBits::eStorageBuffer |
                                                           vk::BufferUsageFlagBits::eShaderDeviceAddress,
-                                                          vk::MemoryPropertyFlagBits::eDeviceLocal);
+                                                          vk::MemoryPropertyFlagBits::eDeviceLocal, m_memory_properties);
 
     // CREATE THE ACCELERATION STRUCTURE
     vk::AccelerationStructureCreateInfoKHR createInfo = {
@@ -742,12 +655,14 @@ void Vulkan::createTopAccelerationStructure() {
                     dynamicDispatchLoader),
     };
 
-    topAccelerationStructure.instancesBuffer = createBuffer(
+    topAccelerationStructure.instancesBuffer = vulkan::create_buffer(
+        device,
             sizeof(vk::AccelerationStructureInstanceKHR),
             vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR |
             vk::BufferUsageFlagBits::eShaderDeviceAddress,
             vk::MemoryPropertyFlagBits::eDeviceLocal | vk::MemoryPropertyFlagBits::eHostCoherent |
-            vk::MemoryPropertyFlagBits::eHostVisible);
+            vk::MemoryPropertyFlagBits::eHostVisible,
+        m_memory_properties);
 
     void* pInstancesBuffer = device.mapMemory(topAccelerationStructure.instancesBuffer.memory, 0,
                                               sizeof(vk::AccelerationStructureInstanceKHR));
@@ -781,9 +696,9 @@ void Vulkan::createTopAccelerationStructure() {
 
 void Vulkan::destroyAccelerationStructure(const VulkanAccelerationStructure &accelerationStructure) {
     device.destroyAccelerationStructureKHR(accelerationStructure.accelerationStructure, nullptr, dynamicDispatchLoader);
-    destroyBuffer(accelerationStructure.structureBuffer);
-    destroyBuffer(accelerationStructure.scratchBuffer);
-    destroyBuffer(accelerationStructure.instancesBuffer);
+    vulkan::destroy_buffer(device, accelerationStructure.structureBuffer);
+    vulkan::destroy_buffer(device, accelerationStructure.scratchBuffer);
+    vulkan::destroy_buffer(device, accelerationStructure.instancesBuffer);
 }
 
 vk::ShaderModule Vulkan::createShaderModule(const std::string &path) const {
@@ -806,12 +721,13 @@ void Vulkan::createShaderBindingTable() {
     const uint32_t shaderGroupCount = 3;
     vk::DeviceSize sbtBufferSize = baseAlignment * shaderGroupCount;
 
-    shaderBindingTableBuffer = createBuffer(sbtBufferSize,
+    shaderBindingTableBuffer = vulkan::create_buffer(device, sbtBufferSize,
                                             vk::BufferUsageFlagBits::eShaderBindingTableKHR |
                                             vk::BufferUsageFlagBits::eShaderDeviceAddress,
                                             vk::MemoryPropertyFlagBits::eHostVisible |
                                             vk::MemoryPropertyFlagBits::eHostCoherent |
-                                            vk::MemoryPropertyFlagBits::eDeviceLocal);
+                                            vk::MemoryPropertyFlagBits::eDeviceLocal,
+        m_memory_properties);
 
 
     std::vector<uint8_t> handles = device.getRayTracingShaderGroupHandlesKHR<uint8_t>(
@@ -858,36 +774,26 @@ vk::PhysicalDeviceRayTracingPipelinePropertiesKHR Vulkan::getRayTracingPropertie
 void Vulkan::createSphereBuffer() {
     const vk::DeviceSize bufferSize = sizeof(Sphere) * MAX_SPHERE_AMOUNT;
 
-    sphereBuffer = createBuffer(bufferSize,
+    sphereBuffer = vulkan::create_buffer(device, bufferSize,
                                 vk::BufferUsageFlagBits::eUniformBuffer,
                                 vk::MemoryPropertyFlagBits::eHostVisible |
                                 vk::MemoryPropertyFlagBits::eHostCoherent |
-                                vk::MemoryPropertyFlagBits::eDeviceLocal);
+                                vk::MemoryPropertyFlagBits::eDeviceLocal, m_memory_properties);
 
     void* data = device.mapMemory(sphereBuffer.memory, 0, bufferSize);
     memcpy(data, scene.spheres, sizeof(Sphere) * scene.sphereAmount);
     device.unmapMemory(sphereBuffer.memory);
 }
 
-vk::AabbPositionsKHR Vulkan::getAABBFromSphere(const glm::vec4 &geometry) {
-    return {
-            .minX = geometry.x - geometry.w,
-            .minY = geometry.y - geometry.w,
-            .minZ = geometry.z - geometry.w,
-            .maxX = geometry.x + geometry.w,
-            .maxY = geometry.y + geometry.w,
-            .maxZ = geometry.z + geometry.w
-    };
-}
-
 void Vulkan::createRenderCallInfoBuffer() {
     renderCallInfoBuffers.resize(swapChainImages.size());
     std::ranges::for_each(renderCallInfoBuffers,
         [this](auto& buffer) {
-            buffer = createBuffer(sizeof(RenderCallInfo), vk::BufferUsageFlagBits::eUniformBuffer,
+            buffer = vulkan::create_buffer(device, sizeof(RenderCallInfo), vk::BufferUsageFlagBits::eUniformBuffer,
             vk::MemoryPropertyFlagBits::eHostVisible |
             vk::MemoryPropertyFlagBits::eHostCoherent |
-                vk::MemoryPropertyFlagBits::eDeviceLocal);
+                vk::MemoryPropertyFlagBits::eDeviceLocal,
+                m_memory_properties);
         });
 }
 

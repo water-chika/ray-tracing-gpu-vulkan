@@ -16,6 +16,7 @@
 #include <set>
 #include <string>
 #include <ranges>
+#include <numeric>
 
 struct VulkanImage {
     vk::Image image;
@@ -233,7 +234,7 @@ namespace vulkan {
         return swapchain;
     }
 
-    inline uint32_t findMemoryTypeIndex(vk::PhysicalDeviceMemoryProperties& memory_properties, const uint32_t& memoryTypeBits, const vk::MemoryPropertyFlags& properties) {
+    inline uint32_t findMemoryTypeIndex(const vk::PhysicalDeviceMemoryProperties& memory_properties, const uint32_t& memoryTypeBits, const vk::MemoryPropertyFlags& properties) {
         for (uint32_t i = 0; i < memory_properties.memoryTypeCount; i++) {
             if ((memoryTypeBits & (1 << i)) && (memory_properties.memoryTypes[i].propertyFlags & properties) == properties) {
                 return i;
@@ -311,6 +312,78 @@ namespace vulkan {
         device.destroyImage(image.image);
         device.freeMemory(image.memory);
     }
+
+    inline auto create_fences(vk::Device device, uint32_t count) {
+        std::vector<vk::Fence> fences(count);
+        std::ranges::generate(
+            fences,
+            [device]() {
+                return device.createFence(vk::FenceCreateInfo{}.setFlags(vk::FenceCreateFlagBits::eSignaled));
+            }
+        );
+        return fences;
+    }
+
+    inline auto create_semaphores(vk::Device device, uint32_t count) {
+        std::vector<vk::Semaphore> semaphores(count);
+        std::ranges::generate(
+            semaphores,
+            [device]() {
+                return device.createSemaphore(vk::SemaphoreCreateInfo{});
+            }
+        );
+        return semaphores;
+    }
+
+    inline VulkanBuffer create_buffer(vk::Device device, const vk::DeviceSize& size, const vk::Flags<vk::BufferUsageFlagBits>& usage,
+        const vk::Flags<vk::MemoryPropertyFlagBits>& memoryProperty, const vk::PhysicalDeviceMemoryProperties& memory_properties) {
+        vk::BufferCreateInfo bufferCreateInfo = {
+                .size = size,
+                .usage = usage,
+                .sharingMode = vk::SharingMode::eExclusive
+        };
+
+        vk::Buffer buffer = device.createBuffer(bufferCreateInfo);
+
+        vk::MemoryRequirements memoryRequirements = device.getBufferMemoryRequirements(buffer);
+
+        vk::MemoryAllocateFlagsInfo allocateFlagsInfo = {
+                .flags = vk::MemoryAllocateFlagBits::eDeviceAddress
+        };
+
+        vk::MemoryAllocateInfo allocateInfo = {
+                .pNext = &allocateFlagsInfo,
+                .allocationSize = memoryRequirements.size,
+                .memoryTypeIndex = vulkan::findMemoryTypeIndex(memory_properties, memoryRequirements.memoryTypeBits, memoryProperty)
+        };
+
+        vk::DeviceMemory memory = device.allocateMemory(allocateInfo);
+
+        device.bindBufferMemory(buffer, memory, 0);
+
+        return {
+                .buffer = buffer,
+                .memory = memory,
+        };
+    }
+
+    inline void destroy_buffer(vk::Device device, const VulkanBuffer& buffer) {
+        device.destroyBuffer(buffer.buffer);
+        device.freeMemory(buffer.memory);
+    }
+
+    inline auto create_aabb_buffer(vk::Device device, uint32_t count, const vk::PhysicalDeviceMemoryProperties& memory_properties) {
+        const vk::DeviceSize bufferSize = sizeof(vk::AabbPositionsKHR) * count;
+
+        auto aabbBuffer = create_buffer(device, bufferSize,
+            vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR |
+            vk::BufferUsageFlagBits::eShaderDeviceAddress,
+            vk::MemoryPropertyFlagBits::eHostVisible |
+            vk::MemoryPropertyFlagBits::eHostCoherent |
+            vk::MemoryPropertyFlagBits::eDeviceLocal,
+            memory_properties);
+        return aabbBuffer;
+    }
 }
 
 
@@ -325,6 +398,9 @@ public:
         vk::SwapchainKHR swapchain, auto swapchain_images, auto swapchain_image_views,
         vk::Extent2D swapchain_extent,
         VulkanImage render_target_image, VulkanImage summed_image,
+        auto fences,
+        auto next_image_semaphores, auto render_image_semaphores,
+        auto& aabbs, VulkanBuffer& aabb_buffer,
         VulkanSettings settings, Scene scene) :
         instance{instance}, surface{surface},
         physicalDevice{ physical_device }, m_memory_properties{memory_properties},
@@ -333,14 +409,13 @@ public:
         commandPool{command_pool},
         swapChain{ swapchain }, swapChainImages{ swapchain_images }, swapChainImageViews{ swapchain_image_views }, swapChainExtent{ swapchain_extent },
         renderTargetImage{render_target_image}, summedPixelColorImage{summed_image},
+        m_fences{fences},
+        m_next_image_semaphores{ next_image_semaphores }, m_render_image_semaphores{ render_image_semaphores },
+        aabbs{aabbs}, aabbBuffer{ aabb_buffer },
         settings(settings), scene(scene),
         m_width(settings.windowWidth), m_height(settings.windowHeight)
     {
 
-        aabbs.reserve(scene.sphereAmount);
-        for (int i = 0; i < scene.sphereAmount; i++) {
-            aabbs.push_back(getAABBFromSphere(scene.spheres[i].geometry));
-        }
 
         dynamicDispatchLoader = vk::detail::DispatchLoaderDynamic(instance, vkGetInstanceProcAddr, device);
 
@@ -369,7 +444,11 @@ public:
             }
         );
 
-        createAABBBuffer();
+        auto aabbs_buffer_size = sizeof(aabbs[0]) * aabbs.size();
+        void* data = device.mapMemory(aabbBuffer.memory, 0, aabbs_buffer_size);
+        memcpy(data, aabbs.data(), aabbs_buffer_size);
+        device.unmapMemory(aabbBuffer.memory);
+
         createBottomAccelerationStructure();
         createTopAccelerationStructure();
 
@@ -385,8 +464,9 @@ public:
         createShaderBindingTable();
         createCommandBuffer();
 
-        createFence();
-        createSemaphore();
+        m_next_image_semaphores_indices.resize(swapChainImages.size());
+        std::iota(m_next_image_semaphores_indices.begin(), m_next_image_semaphores_indices.end(), 0);
+        m_next_image_free_semaphore_index = swapChainImages.size();
     }
 
     ~Vulkan();
@@ -507,22 +587,11 @@ private:
     void record_ray_tracing(vk::CommandBuffer cmd, int index);
     void createCommandBuffer();
 
-    void createFence();
-
-    void createSemaphore();
-
     [[nodiscard]] vk::ImageMemoryBarrier getImagePipelineBarrier(
             const vk::AccessFlags srcAccessFlags, const vk::AccessFlags dstAccessFlags,
             const vk::ImageLayout &oldLayout, const vk::ImageLayout &newLayout, const vk::Image &image) const;
 
-    [[nodiscard]] VulkanBuffer createBuffer(const vk::DeviceSize &size, const vk::Flags<vk::BufferUsageFlagBits> &usage,
-                                            const vk::Flags<vk::MemoryPropertyFlagBits> &memoryProperty);
-
-    void destroyBuffer(const VulkanBuffer &buffer) const;
-
     void executeSingleTimeCommand(const std::function<void(const vk::CommandBuffer &singleTimeCommandBuffer)> &c);
-
-    void createAABBBuffer();
 
     void createBottomAccelerationStructure();
 
@@ -537,8 +606,6 @@ private:
     [[nodiscard]] vk::PhysicalDeviceRayTracingPipelinePropertiesKHR getRayTracingProperties() const;
 
     void createSphereBuffer();
-
-    [[nodiscard]] static vk::AabbPositionsKHR getAABBFromSphere(const glm::vec4 &geometry);
 
     void createRenderCallInfoBuffer();
 
