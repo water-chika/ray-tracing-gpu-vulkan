@@ -36,48 +36,47 @@ void ray_trace(
 
     auto surface = view_window.create_surface(instance);
 
+    auto physical_device = vulkan::pick_physical_device(instance, Vulkan::get_required_device_extensions());
 
-    Vulkan vulkan(instance, surface, settings, generateRandomScene()
+
+    while (!view_window.should_close()) {
+        Vulkan vulkan(instance, surface, physical_device,
+            vulkan::find_queue_family(physical_device, surface),
+            settings, generateRandomScene()
         );
 
-    // RENDERING
-    std::cout << "Rendering started: " << samples << " samples with "
-        << samplesPerRenderCall << " samples per render call" << std::endl;
+        // RENDERING
 
-    auto renderBeginTime = std::chrono::steady_clock::now();
-    int requiredRenderCalls = samples / samplesPerRenderCall;
+        auto renderBeginTime = std::chrono::steady_clock::now();
+        int requiredRenderCalls = samples / samplesPerRenderCall;
 
-    uint32_t number = 0;
-    while (number < requiredRenderCalls) {
-        ++number;
-        RenderCallInfo renderCallInfo = {
-            .number = number,
-            .samplesPerRenderCall = samplesPerRenderCall,
-        };
+        uint32_t number = 0;
+        while (number < requiredRenderCalls) {
+            ++number;
+            RenderCallInfo renderCallInfo = {
+                .number = number,
+                .samplesPerRenderCall = samplesPerRenderCall,
+            };
 
-        std::cout << "Render call " << number << " / " << requiredRenderCalls
-            << " (" << (number * samplesPerRenderCall) << " / " << samples
-            << " samples)" << std::endl;
+            vulkan.render(renderCallInfo);
 
-        vulkan.render(renderCallInfo);
-
-        view_window.poll_events();
-        if (view_window.should_close()) {
-            break;
+            view_window.poll_events();
+            if (view_window.should_close()) {
+                break;
+            }
         }
-    }
 
-    vulkan.wait_render_complete();
+        vulkan.wait_render_complete();
 
-    auto renderTime = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - renderBeginTime).count();
-    std::cout << "Rendering completed: " << number * samplesPerRenderCall << " samples rendered in "
-        << renderTime << " ms" << std::endl << std::endl;
+        auto renderTime = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - renderBeginTime).count();
 
-    if (storeRenderResult) {
-        std::cout << "Write to file:" << "render_result.png" << std::endl;
-        vulkan.write_to_file("render_result.hdr");
-        std::cout << "Write completes." << std::endl;
+        if (storeRenderResult) {
+            std::cout << "Write to file:" << "render_result.png" << std::endl;
+            vulkan.write_to_file("render_result.hdr");
+            std::cout << "Write completes." << std::endl;
+        }
+
     }
 
     // WINDOW

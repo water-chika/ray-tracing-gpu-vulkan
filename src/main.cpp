@@ -39,15 +39,19 @@ int main(int argc, const char** argv) {
         }
         else if (argv[i] == "--samples"s) {
             std::from_chars(argv[i + 1], argv[i + 1] + strlen(argv[i + 1]), samples);
+            ++i;
         }
         else if (argv[i] == "--samples_per_render_call"s) {
             std::from_chars(argv[i + 1], argv[i + 1] + strlen(argv[i + 1]), samplesPerRenderCall);
+            ++i;
         }
         else if (argv[i] == "--width"s) {
             std::from_chars(argv[i + 1], argv[i + 1] + strlen(argv[i + 1]), width);
+            ++i;
         }
         else if (argv[i] == "--height"s) {
             std::from_chars(argv[i + 1], argv[i + 1] + strlen(argv[i + 1]), height);
+            ++i;
         }
         else {
             std::cerr << "unknown argument: " << argv[i] << std::endl;

@@ -93,71 +93,6 @@ void Vulkan::render(const RenderCallInfo& renderCallInfo) {
     presentQueue.presentKHR(presentInfo);
 }
 
-void Vulkan::pickPhysicalDevice() {
-    std::vector<vk::PhysicalDevice> allPhysicalDevices = instance.enumeratePhysicalDevices();
-
-    if (allPhysicalDevices.empty()) {
-        throw std::runtime_error("No GPU with Vulkan support found!");
-    }
-
-    std::vector<vk::PhysicalDevice> withRequiredExtensionsPhysicalDevices{};
-    for (const vk::PhysicalDevice &d: allPhysicalDevices) {
-        std::vector<vk::ExtensionProperties> availableExtensions = d.enumerateDeviceExtensionProperties();
-        std::set<std::string> requiredExtensions(requiredDeviceExtensions.begin(), requiredDeviceExtensions.end());
-
-        for (const vk::ExtensionProperties &extension: availableExtensions) {
-            requiredExtensions.erase(extension.extensionName);
-        }
-
-        if (requiredExtensions.empty()) {
-            withRequiredExtensionsPhysicalDevices.push_back(d);
-        }
-    }
-
-    for (const vk::PhysicalDevice& d : withRequiredExtensionsPhysicalDevices) {
-        if (d.getProperties().deviceType == vk::PhysicalDeviceType::eDiscreteGpu) {
-            physicalDevice = d;
-            return;
-        }
-    }
-
-    if (withRequiredExtensionsPhysicalDevices.size() > 0) {
-        physicalDevice = withRequiredExtensionsPhysicalDevices[0];
-        return;
-    }
-
-    throw std::runtime_error("No GPU supporting all required features found!");
-}
-
-void Vulkan::findQueueFamilies() {
-    std::vector<vk::QueueFamilyProperties> queueFamilies = physicalDevice.getQueueFamilyProperties();
-
-    bool computeFamilyFound = false;
-    bool presentFamilyFound = false;
-
-    for (uint32_t i = 0; i < queueFamilies.size(); i++) {
-        bool supportsGraphics = (queueFamilies[i].queueFlags & vk::QueueFlagBits::eGraphics)
-                                == vk::QueueFlagBits::eGraphics;
-        bool supportsCompute = (queueFamilies[i].queueFlags & vk::QueueFlagBits::eCompute)
-                               == vk::QueueFlagBits::eCompute;
-        bool supportsPresenting = physicalDevice.getSurfaceSupportKHR(static_cast<uint32_t>(i), surface);
-
-        if (supportsCompute && !supportsGraphics && !computeFamilyFound) {
-            computeQueueFamily = i;
-            computeFamilyFound = true;
-            continue;
-        }
-
-        if (supportsPresenting && !presentFamilyFound) {
-            presentQueueFamily = i;
-            presentFamilyFound = true;
-        }
-
-        if (computeFamilyFound && presentFamilyFound)
-            break;
-    }
-}
-
 void Vulkan::createLogicalDevice() {
     float queuePriority = 1.0f;
     std::vector<vk::DeviceQueueCreateInfo> queueCreateInfos = {
@@ -196,6 +131,8 @@ void Vulkan::createLogicalDevice() {
             .accelerationStructureHostCommands = false,
             .descriptorBindingAccelerationStructureUpdateAfterBind = false
     };
+
+    auto requiredDeviceExtensions = Vulkan::get_required_device_extensions();
 
     vk::DeviceCreateInfo deviceCreateInfo = {
             .pNext = &accelerationStructureFeatures,

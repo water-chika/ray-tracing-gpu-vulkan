@@ -1,9 +1,11 @@
 #include "scene.h"
 #include <random>
 
+#include <chrono>
+
+std::mt19937 engine{};
+
 float randomFloat(float min, float max) {
-    std::random_device rd;
-    std::mt19937 engine(rd());
     std::uniform_real_distribution<float> distribution(min, max);
     return distribution(engine);
 }
@@ -43,6 +45,9 @@ glm::vec4 getRandomColor() {
 Scene generateRandomScene() {
     Scene scene = {};
 
+    auto now = std::chrono::steady_clock::now();
+    auto t = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count() * 0.001f;
+
     scene.spheres[0] = {
             .geometry = glm::vec4(0.0f, -1000.0f, 1.0f, 1000.0f),
             .materialType = MaterialType::DIFFUSE,
@@ -52,7 +57,7 @@ Scene generateRandomScene() {
     };
 
     scene.spheres[1] = {
-            .geometry = glm::vec4(-4.0f, 1.0f, 0.0f, 1.0f),
+            .geometry = glm::vec4(-4.0f, 1.0f, cos(2*t), 1.0f),
             .materialType = MaterialType::DIFFUSE,
             .textureType = TextureType::SOLID,
             .colors = {glm::vec4(0.6f, 0.3f, 0.1f, 1.0f)},
@@ -60,15 +65,16 @@ Scene generateRandomScene() {
     };
 
     scene.spheres[2] = {
-            .geometry = glm::vec4(4.0f, 1.0f, 0.0f, 1.0f),
+            .geometry = glm::vec4(4.0f, 1.0f, cos(3*t), 1.0f),
             .materialType = MaterialType::METAL,
             .textureType = TextureType::SOLID,
             .colors = {glm::vec4(0.8f, 0.8f, 0.8f, 1.0f)},
             .materialSpecificAttribute = 0.0f
     };
 
+    auto offset = cos(t);
     scene.spheres[3] = {
-            .geometry = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f),
+            .geometry = glm::vec4(0.0f, 1.0f, offset, 1.0f),
             .materialType = MaterialType::REFRACTIVE,
             .textureType = TextureType::SOLID,
             .colors = {glm::vec4(1.0f, 1.0f, 1.0f, 1.0f)},
@@ -76,6 +82,8 @@ Scene generateRandomScene() {
     };
 
     uint32_t sphereIndex = 4;
+
+    engine.seed(0);
 
     for (int a = -11; a < 11; a++) {
         for (int b = -11; b < 11; b++) {

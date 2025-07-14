@@ -13,6 +13,8 @@
 
 #include <map>
 #include <filesystem>
+#include <set>
+#include <string>
 
 struct VulkanImage {
     vk::Image image;
@@ -61,13 +63,87 @@ namespace vulkan {
         return vk::createInstance(instanceCreateInfo);
     }
 
+    vk::PhysicalDevice pick_physical_device(vk::Instance instance, const auto& extensions) {
+        std::vector<vk::PhysicalDevice> allPhysicalDevices = instance.enumeratePhysicalDevices();
+
+        if (allPhysicalDevices.empty()) {
+            throw std::runtime_error("No GPU with Vulkan support found!");
+        }
+
+        std::vector<vk::PhysicalDevice> withRequiredExtensionsPhysicalDevices{};
+        for (const vk::PhysicalDevice& d : allPhysicalDevices) {
+            std::vector<vk::ExtensionProperties> availableExtensions = d.enumerateDeviceExtensionProperties();
+            std::set<std::string> requiredExtensions(extensions.begin(), extensions.end());
+
+            for (const vk::ExtensionProperties& extension : availableExtensions) {
+                requiredExtensions.erase(extension.extensionName);
+            }
+
+            if (requiredExtensions.empty()) {
+                withRequiredExtensionsPhysicalDevices.push_back(d);
+            }
+        }
+
+        for (const vk::PhysicalDevice& d : withRequiredExtensionsPhysicalDevices) {
+            if (d.getProperties().deviceType == vk::PhysicalDeviceType::eDiscreteGpu) {
+                return d;
+            }
+        }
+
+        if (withRequiredExtensionsPhysicalDevices.size() > 0) {
+            return withRequiredExtensionsPhysicalDevices[0];
+        }
+
+        throw std::runtime_error("No GPU supporting all required features found!");
+    }
+
+    inline auto find_queue_family(vk::PhysicalDevice physicalDevice, vk::SurfaceKHR surface) {
+        uint32_t computeQueueFamily = 0, presentQueueFamily = 0;
+
+        std::vector<vk::QueueFamilyProperties> queueFamilies = physicalDevice.getQueueFamilyProperties();
+
+        bool computeFamilyFound = false;
+        bool presentFamilyFound = false;
+
+        for (uint32_t i = 0; i < queueFamilies.size(); i++) {
+            bool supportsGraphics = (queueFamilies[i].queueFlags & vk::QueueFlagBits::eGraphics)
+                == vk::QueueFlagBits::eGraphics;
+            bool supportsCompute = (queueFamilies[i].queueFlags & vk::QueueFlagBits::eCompute)
+                == vk::QueueFlagBits::eCompute;
+            bool supportsPresenting = physicalDevice.getSurfaceSupportKHR(static_cast<uint32_t>(i), surface);
+
+            if (supportsCompute && !supportsGraphics && !computeFamilyFound) {
+                computeQueueFamily = i;
+                computeFamilyFound = true;
+                continue;
+            }
+
+            if (supportsPresenting && !presentFamilyFound) {
+                presentQueueFamily = i;
+                presentFamilyFound = true;
+            }
+
+            if (computeFamilyFound && presentFamilyFound)
+                break;
+        }
+        if (!computeFamilyFound || !presentFamilyFound) {
+            throw std::runtime_error{ "can not find compute queue or present queue" };
+        }
+
+        return std::pair{ computeQueueFamily, presentQueueFamily };
+    }
 }
 
 
 class Vulkan {
 public:
-    Vulkan(vk::Instance instance, vk::SurfaceKHR surface, VulkanSettings settings, Scene scene) :
+    Vulkan(
+        vk::Instance instance, vk::SurfaceKHR surface, vk::PhysicalDevice physical_device,
+        std::pair<uint32_t, uint32_t> compute_present_queue_families,
+        VulkanSettings settings, Scene scene) :
         instance{instance}, surface{surface},
+        physicalDevice{ physical_device },
+        computeQueueFamily{ compute_present_queue_families.first }, presentQueueFamily{ compute_present_queue_families.second },
         settings(settings), scene(scene),
         m_width(settings.windowWidth), m_height(settings.windowHeight)
     {
@@ -76,9 +152,6 @@ public:
         for (int i = 0; i < scene.sphereAmount; i++) {
             aabbs.push_back(getAABBFromSphere(scene.spheres[i].geometry));
         }
-
-        pickPhysicalDevice();
-        findQueueFamilies();
         createLogicalDevice();
 
         dynamicDispatchLoader = vk::detail::DispatchLoaderDynamic(instance, vkGetInstanceProcAddr, device);
@@ -117,6 +190,21 @@ public:
         return requiredInstanceExtensions;
     }
 
+    static auto get_required_device_extensions() {
+        const std::vector<const char*> requiredDeviceExtensions = {
+                VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+                VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
+                VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
+                VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME,
+                VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
+                VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
+                VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
+                VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME,
+                VK_KHR_MAINTENANCE3_EXTENSION_NAME
+        };
+        return requiredDeviceExtensions;
+    }
+
     void render(const RenderCallInfo &renderCallInfo);
 
     void wait_render_complete();
@@ -134,17 +222,6 @@ private:
     vk::PresentModeKHR presentMode = vk::PresentModeKHR::eImmediate;
 
 
-    const std::vector<const char*> requiredDeviceExtensions = {
-            VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-            VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
-            VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
-            VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME,
-            VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
-            VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME,
-            VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
-            VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME,
-            VK_KHR_MAINTENANCE3_EXTENSION_NAME
-    };
 
 
     vk::Instance instance;
@@ -216,8 +293,6 @@ private:
     void createSurface(auto&& create_surface) {
         surface = create_surface(instance);
     }
-
-    void pickPhysicalDevice();
 
     void findQueueFamilies();
 
