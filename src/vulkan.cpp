@@ -121,16 +121,6 @@ void Vulkan::executeSingleTimeCommand(const std::function<void(const vk::Command
     device.freeCommandBuffers(commandPool, singleTimeCommandBuffer);
 }
 
-
-
-
-void Vulkan::destroyAccelerationStructure(const VulkanAccelerationStructure &accelerationStructure) {
-    device.destroyAccelerationStructureKHR(accelerationStructure.accelerationStructure, nullptr, dynamicDispatchLoader);
-    vulkan::destroy_buffer(device, accelerationStructure.structureBuffer);
-    vulkan::destroy_buffer(device, accelerationStructure.scratchBuffer);
-    vulkan::destroy_buffer(device, accelerationStructure.instancesBuffer);
-}
-
 void Vulkan::updateRenderCallInfoBuffer(const RenderCallInfo &renderCallInfo, int index) {
     void* data = device.mapMemory(renderCallInfoBuffers[index].memory, 0, sizeof(RenderCallInfo));
     memcpy(data, &renderCallInfo, sizeof(RenderCallInfo));
@@ -181,7 +171,7 @@ void Vulkan::write_to_file(std::filesystem::path path) {
                 .setSrcQueueFamilyIndex(computeQueueFamily)
                 .setDstAccessMask(vk::AccessFlagBits::eMemoryRead)
                 .setDstQueueFamilyIndex(computeQueueFamily)
-                .setImage(summedPixelColorImage.image)
+                .setImage(m_summed_image)
                 .setOldLayout(vk::ImageLayout::eTransferSrcOptimal)
                 .setNewLayout(vk::ImageLayout::eTransferSrcOptimal)
                 .setSubresourceRange(
@@ -200,7 +190,7 @@ void Vulkan::write_to_file(std::filesystem::path path) {
                 .setImageExtent(vk::Extent3D{width,height,1})
             ;
             cmd.copyImageToBuffer(
-                summedPixelColorImage.image,
+                m_summed_image,
                     vk::ImageLayout::eTransferSrcOptimal,
                     buffer,
                     1,

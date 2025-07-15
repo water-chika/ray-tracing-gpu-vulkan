@@ -1112,15 +1112,13 @@ public:
         device{ device }, computeQueue{compute_queue}, presentQueue{present_queue},
         computeQueueFamily{ compute_present_queue_families.first }, presentQueueFamily{ compute_present_queue_families.second },
         commandPool{command_pool},
-        swapChain{ swapchain }, swapChainImages{ swapchain_images }, swapChainExtent{ swapchain_extent },
-        summedPixelColorImage{summed_image},
+        swapChain{ swapchain }, swapChainExtent{ swapchain_extent },
+        m_summed_image{summed_image.image},
         m_fences{fences},
         m_next_image_semaphores{ next_image_semaphores }, m_render_image_semaphores{ render_image_semaphores },
-        aabbs{aabbs}, aabbBuffer{ aabb_buffer },
-        sphereBuffer{ sphere_buffer }, renderCallInfoBuffers{ render_call_buffers },
+        renderCallInfoBuffers{ render_call_buffers },
         commandBuffers{command_buffers},
-        dynamicDispatchLoader{ dynamicDispatchLoader },
-        settings(settings), scene(scene)
+        settings(settings)
     {
         executeSingleTimeCommand(
             [this](vk::CommandBuffer commandBuffer) {
@@ -1130,8 +1128,8 @@ public:
                     {}, {},
                     getImagePipelineBarrier(
                         vk::AccessFlagBits::eNoneKHR, vk::AccessFlagBits::eTransferWrite,
-                        vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, summedPixelColorImage.image));
-                commandBuffer.clearColorImage(summedPixelColorImage.image, vk::ImageLayout::eTransferDstOptimal,
+                        vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, m_summed_image));
+                commandBuffer.clearColorImage(m_summed_image, vk::ImageLayout::eTransferDstOptimal,
                     vk::ClearColorValue{},
                     vk::ImageSubresourceRange{}
                     .setAspectMask(vk::ImageAspectFlagBits::eColor)
@@ -1143,14 +1141,14 @@ public:
                     {}, {},
                     getImagePipelineBarrier(
                         vk::AccessFlagBits::eTransferWrite, vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite,
-                        vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eGeneral, summedPixelColorImage.image));
+                        vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eGeneral, m_summed_image));
             }
         );
 
         auto aabbs_buffer_size = sizeof(aabbs[0]) * aabbs.size();
-        void* data = device.mapMemory(aabbBuffer.memory, 0, aabbs_buffer_size);
+        void* data = device.mapMemory(aabb_buffer.memory, 0, aabbs_buffer_size);
         memcpy(data, aabbs.data(), aabbs_buffer_size);
-        device.unmapMemory(aabbBuffer.memory);
+        device.unmapMemory(aabb_buffer.memory);
 
 
         // BUILD THE ACCELERATION STRUCTURE
@@ -1181,14 +1179,14 @@ public:
             });
         
         {
-            void* data = device.mapMemory(sphereBuffer.memory, 0, sphere_buffer_size);
+            void* data = device.mapMemory(sphere_buffer.memory, 0, sphere_buffer_size);
             memcpy(data, scene.spheres, sizeof(Sphere) * scene.sphereAmount);
-            device.unmapMemory(sphereBuffer.memory);
+            device.unmapMemory(sphere_buffer.memory);
         }
 
-        m_next_image_semaphores_indices.resize(swapChainImages.size());
+        m_next_image_semaphores_indices.resize(swapchain_images.size());
         std::iota(m_next_image_semaphores_indices.begin(), m_next_image_semaphores_indices.end(), 0);
-        m_next_image_free_semaphore_index = swapChainImages.size();
+        m_next_image_free_semaphore_index = swapchain_images.size();
     }
 
     ~Vulkan(){}
@@ -1224,25 +1222,19 @@ public:
 
 private:
     VulkanSettings settings;
-    Scene scene;
-    std::vector<vk::AabbPositionsKHR> aabbs;
 
     vk::PhysicalDeviceMemoryProperties m_memory_properties;
     vk::Device device;
 
-    vk::detail::DispatchLoaderDynamic dynamicDispatchLoader;
-
-    uint32_t presentQueueFamily = 0, computeQueueFamily = 0;
+    uint32_t presentQueueFamily, computeQueueFamily;
     vk::Queue presentQueue, computeQueue;
 
     vk::CommandPool commandPool;
 
     vk::SwapchainKHR swapChain;
     vk::Extent2D swapChainExtent;
-    std::vector<vk::Image> swapChainImages;
 
     std::vector<vk::CommandBuffer> commandBuffers;
-    std::vector<vk::CommandBuffer> commandBuffersForNoPresent;
 
     std::vector<vk::Fence> m_fences;
     auto get_fence(uint32_t image_index) {
@@ -1267,14 +1259,9 @@ private:
         return m_render_image_semaphores[image_index];
     }
 
-    VulkanImage summedPixelColorImage;
+    vk::Image m_summed_image;
 
-    VulkanBuffer aabbBuffer;
-
-    VulkanBuffer sphereBuffer;
     std::vector<VulkanBuffer> renderCallInfoBuffers;
-
-    [[nodiscard]] static std::vector<char> readBinaryFile(const std::string &path);
 
     [[nodiscard]] vk::ImageMemoryBarrier getImagePipelineBarrier(
             const vk::AccessFlags srcAccessFlags, const vk::AccessFlags dstAccessFlags,
@@ -1282,8 +1269,5 @@ private:
 
     void executeSingleTimeCommand(const std::function<void(const vk::CommandBuffer &singleTimeCommandBuffer)> &c);
 
-    void destroyAccelerationStructure(const VulkanAccelerationStructure &accelerationStructure);
-
     void updateRenderCallInfoBuffer(const RenderCallInfo &renderCallInfo, int index);
-
 };
