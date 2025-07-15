@@ -161,6 +161,24 @@ void ray_trace(
         sbtRayGenAddressRegion, sbtMissAddressRegion, sbtHitAddressRegion,
         width, height, dynamicDispatchLoader);
 
+    Vulkan vulkan(
+        memory_properties,
+        device, compute_queue, present_queue,
+        { compute_queue_family, present_queue_family },
+        command_pool,
+        swapchain, swapchain_images, swapchain_extent,
+        summed_images,
+        fences,
+        next_image_semaphores, render_image_semaphores,
+        aabbs, aabb_buffer,
+        bottom_accel_build_info,
+        top_accel_build_info,
+        sphere_buffer, sphere_buffer_size,
+        render_call_info_buffers,
+        command_buffers,
+        dynamicDispatchLoader,
+        settings, scene
+    );
     while (!view_window.should_close()) {
         scene = generateRandomScene();
         std::ranges::transform(
@@ -184,24 +202,6 @@ void ray_trace(
             aabbs, aabb_buffer, bottom_accel_build_info, top_accel_build_info,
             sphere_buffer, sphere_buffer_size, std::span{ scene.spheres, scene.sphereAmount },
             dynamicDispatchLoader);
-        Vulkan vulkan(
-            memory_properties,
-            device, compute_queue, present_queue,
-            {compute_queue_family, present_queue_family},
-            command_pool,
-            swapchain,swapchain_images, swapchain_extent,
-            summed_images,
-            fences,
-            next_image_semaphores, render_image_semaphores,
-            aabbs, aabb_buffer,
-            bottom_accel_build_info,
-            top_accel_build_info,
-            sphere_buffer, sphere_buffer_size,
-            render_call_info_buffers,
-            command_buffers,
-            dynamicDispatchLoader,
-            settings, scene
-        );
 
         // RENDERING
         int requiredRenderCalls = samples / samplesPerRenderCall;
