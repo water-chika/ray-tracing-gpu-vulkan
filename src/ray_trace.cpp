@@ -155,7 +155,7 @@ void ray_trace(
 
     auto [shader_binding_table_buffer, sbtRayGenAddressRegion, sbtMissAddressRegion, sbtHitAddressRegion] = vulkan::create_shader_binding_table_buffer(device, rt_pipeline, rayTracingPipelinePropertiesKhr, memory_properties, dynamicDispatchLoader);
 
-    auto command_buffers = vulkan::create_command_buffer(
+    auto command_buffers = vulkan::create_command_buffers(
         device, command_pool, swapchain_images.size(), swapchain_images, compute_queue_family,
         render_target_images, summed_images, rt_pipeline, rt_descriptor_sets, rt_pipeline_layout,
         sbtRayGenAddressRegion, sbtMissAddressRegion, sbtHitAddressRegion,
@@ -180,6 +180,10 @@ void ray_trace(
                 return getAABBFromSphere(sphere.geometry);
             }
         );
+        vulkan::build_accel_structures(device, compute_queue, command_pool,
+            aabbs, aabb_buffer, bottom_accel_build_info, top_accel_build_info,
+            sphere_buffer, sphere_buffer_size, std::span{ scene.spheres, scene.sphereAmount },
+            dynamicDispatchLoader);
         Vulkan vulkan(
             memory_properties,
             device, compute_queue, present_queue,

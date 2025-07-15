@@ -977,7 +977,7 @@ namespace vulkan {
             width, height, 1, dynamicDispatchLoader);
     }
 
-    inline auto create_command_buffer(vk::Device device, vk::CommandPool commandPool, uint32_t swapchain_images_count, const auto& swapchain_images,
+    inline auto create_command_buffers(vk::Device device, vk::CommandPool commandPool, uint32_t swapchain_images_count, const auto& swapchain_images,
         uint32_t queue_family, auto& render_target_images, auto& summed_images,
         vk::Pipeline pipeline, const auto& descriptor_sets, vk::PipelineLayout pipeline_layout,
         vk::StridedDeviceAddressRegionKHR sbtRayGenAddressRegion, vk::StridedDeviceAddressRegionKHR sbtMissAddressRegion, vk::StridedDeviceAddressRegionKHR sbtHitAddressRegion,
@@ -995,6 +995,53 @@ namespace vulkan {
 
             vk::CommandBufferBeginInfo beginInfo = {};
             commandBuffer.begin(&beginInfo);
+
+            commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe,
+                vk::PipelineStageFlagBits::eTransfer,
+                vk::DependencyFlagBits::eByRegion,
+                {}, {},
+                vk::ImageMemoryBarrier{
+                    .srcAccessMask = vk::AccessFlagBits::eNoneKHR,
+                    .dstAccessMask = vk::AccessFlagBits::eTransferWrite,
+                    .oldLayout = vk::ImageLayout::eUndefined,
+                    .newLayout = vk::ImageLayout::eTransferDstOptimal,
+                    .srcQueueFamilyIndex = queue_family,
+                    .dstQueueFamilyIndex = queue_family,
+                    .image = summed_images[swapChainImageIndex].image,
+                    .subresourceRange = {
+                            .aspectMask = vk::ImageAspectFlagBits::eColor,
+                            .baseMipLevel = 0,
+                            .levelCount = 1,
+                            .baseArrayLayer = 0,
+                            .layerCount = 1
+                    },
+                });
+            commandBuffer.clearColorImage(summed_images[swapChainImageIndex].image, vk::ImageLayout::eTransferDstOptimal,
+                vk::ClearColorValue{},
+                vk::ImageSubresourceRange{}
+                .setAspectMask(vk::ImageAspectFlagBits::eColor)
+                .setLayerCount(1)
+                .setLevelCount(1));
+            commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+                vk::PipelineStageFlagBits::eRayTracingShaderKHR,
+                vk::DependencyFlagBits::eByRegion,
+                {}, {},
+                vk::ImageMemoryBarrier{
+                    .srcAccessMask = vk::AccessFlagBits::eTransferWrite,
+                    .dstAccessMask = vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite,
+                    .oldLayout = vk::ImageLayout::eTransferDstOptimal,
+                    .newLayout = vk::ImageLayout::eGeneral,
+                    .srcQueueFamilyIndex = queue_family,
+                    .dstQueueFamilyIndex = queue_family,
+                    .image = summed_images[swapChainImageIndex].image,
+                    .subresourceRange = {
+                            .aspectMask = vk::ImageAspectFlagBits::eColor,
+                            .baseMipLevel = 0,
+                            .levelCount = 1,
+                            .baseArrayLayer = 0,
+                            .layerCount = 1
+                    },
+                });
 
             record_ray_tracing(commandBuffer, queue_family, render_target_images[swapChainImageIndex].image, summed_images[swapChainImageIndex].image,
                 pipeline, descriptor_sets[swapChainImageIndex], pipeline_layout,
@@ -1093,6 +1140,88 @@ namespace vulkan {
 
         return commandBuffers;
     }
+
+
+    inline auto execute_single_time_command(vk::Device device, vk::Queue queue, vk::CommandPool command_pool, const std::function<void(const vk::CommandBuffer& singleTimeCommandBuffer)>& c) {
+        vk::CommandBuffer singleTimeCommandBuffer = device.allocateCommandBuffers(
+            {
+                    .commandPool = command_pool,
+                    .level = vk::CommandBufferLevel::ePrimary,
+                    .commandBufferCount = 1
+            }).front();
+
+        vk::CommandBufferBeginInfo beginInfo = {
+                .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit
+        };
+
+        singleTimeCommandBuffer.begin(&beginInfo);
+
+        c(singleTimeCommandBuffer);
+
+        singleTimeCommandBuffer.end();
+
+
+        vk::SubmitInfo submitInfo = {
+                .commandBufferCount = 1,
+                .pCommandBuffers = &singleTimeCommandBuffer
+        };
+
+        vk::Fence f = device.createFence({});
+        queue.submit(1, &submitInfo, f);
+        device.waitForFences(1, &f, true, UINT64_MAX);
+
+        device.destroyFence(f);
+        device.freeCommandBuffers(command_pool, singleTimeCommandBuffer);
+    }
+
+    inline auto build_accel_structures(vk::Device device,
+        vk::Queue queue, vk::CommandPool command_pool,
+        auto& aabbs, VulkanBuffer& aabb_buffer,
+        vk::AccelerationStructureBuildGeometryInfoKHR& bottom_accel_build_info,
+        vk::AccelerationStructureBuildGeometryInfoKHR& top_accel_build_info,
+        VulkanBuffer sphere_buffer, uint32_t sphere_buffer_size,
+        std::span<Sphere> spheres,
+        vk::detail::DispatchLoaderDynamic& dynamicDispatchLoader
+    ) {
+        auto aabbs_buffer_size = sizeof(aabbs[0]) * aabbs.size();
+        void* data = device.mapMemory(aabb_buffer.memory, 0, aabbs_buffer_size);
+        memcpy(data, aabbs.data(), aabbs_buffer_size);
+        device.unmapMemory(aabb_buffer.memory);
+
+
+        // BUILD THE ACCELERATION STRUCTURE
+        vk::AccelerationStructureBuildRangeInfoKHR buildRangeInfo = {
+                .primitiveCount = static_cast<uint32_t>(aabbs.size()),
+                .primitiveOffset = 0,
+                .firstVertex = 0,
+                .transformOffset = 0
+        };
+
+        const vk::AccelerationStructureBuildRangeInfoKHR* pBuildRangeInfos[] = { &buildRangeInfo };
+
+        execute_single_time_command(device, queue, command_pool, [&](const vk::CommandBuffer& singleTimeCommandBuffer) {
+            singleTimeCommandBuffer.buildAccelerationStructuresKHR(1, &bottom_accel_build_info, pBuildRangeInfos, dynamicDispatchLoader);
+            });
+
+        // BUILD THE ACCELERATION STRUCTURE
+        vk::AccelerationStructureBuildRangeInfoKHR top_buildRangeInfo = {
+                .primitiveCount = 1,
+                .primitiveOffset = 0,
+                .firstVertex = 0,
+                .transformOffset = 0
+        };
+
+        const vk::AccelerationStructureBuildRangeInfoKHR* p_top_BuildRangeInfos[] = { &top_buildRangeInfo };
+        execute_single_time_command(device, queue, command_pool, [&](const vk::CommandBuffer& singleTimeCommandBuffer) {
+            singleTimeCommandBuffer.buildAccelerationStructuresKHR(1, &top_accel_build_info, p_top_BuildRangeInfos, dynamicDispatchLoader);
+            });
+
+        {
+            void* data = device.mapMemory(sphere_buffer.memory, 0, sphere_buffer_size);
+            memcpy(data, spheres.data(), sizeof(Sphere) * spheres.size());
+            device.unmapMemory(sphere_buffer.memory);
+        }
+    }
 }
 
 
@@ -1128,77 +1257,6 @@ public:
         commandBuffers{command_buffers},
         settings(settings)
     {
-        std::vector<uint32_t> indices(swapchain_images.size());
-        std::ranges::iota(indices, 0);
-        std::ranges::for_each(
-            indices,
-            [this](auto i) {
-                executeSingleTimeCommand(
-                    [this, i](vk::CommandBuffer commandBuffer) {
-                        commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe,
-                            vk::PipelineStageFlagBits::eTransfer,
-                            vk::DependencyFlagBits::eByRegion,
-                            {}, {},
-                            getImagePipelineBarrier(
-                                vk::AccessFlagBits::eNoneKHR, vk::AccessFlagBits::eTransferWrite,
-                                vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, m_summed_images[i].image));
-                        commandBuffer.clearColorImage(m_summed_images[i].image, vk::ImageLayout::eTransferDstOptimal,
-                            vk::ClearColorValue{},
-                            vk::ImageSubresourceRange{}
-                            .setAspectMask(vk::ImageAspectFlagBits::eColor)
-                            .setLayerCount(1)
-                            .setLevelCount(1));
-                        commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
-                            vk::PipelineStageFlagBits::eRayTracingShaderKHR,
-                            vk::DependencyFlagBits::eByRegion,
-                            {}, {},
-                            getImagePipelineBarrier(
-                                vk::AccessFlagBits::eTransferWrite, vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite,
-                                vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eGeneral, m_summed_images[i].image));
-                    }
-                );
-            }
-        );
-
-        auto aabbs_buffer_size = sizeof(aabbs[0]) * aabbs.size();
-        void* data = device.mapMemory(aabb_buffer.memory, 0, aabbs_buffer_size);
-        memcpy(data, aabbs.data(), aabbs_buffer_size);
-        device.unmapMemory(aabb_buffer.memory);
-
-
-        // BUILD THE ACCELERATION STRUCTURE
-        vk::AccelerationStructureBuildRangeInfoKHR buildRangeInfo = {
-                .primitiveCount = static_cast<uint32_t>(aabbs.size()),
-                .primitiveOffset = 0,
-                .firstVertex = 0,
-                .transformOffset = 0
-        };
-
-        const vk::AccelerationStructureBuildRangeInfoKHR* pBuildRangeInfos[] = { &buildRangeInfo };
-
-        executeSingleTimeCommand([&](const vk::CommandBuffer& singleTimeCommandBuffer) {
-            singleTimeCommandBuffer.buildAccelerationStructuresKHR(1, &bottom_accel_build_info, pBuildRangeInfos, dynamicDispatchLoader);
-            });
-
-        // BUILD THE ACCELERATION STRUCTURE
-        vk::AccelerationStructureBuildRangeInfoKHR top_buildRangeInfo = {
-                .primitiveCount = 1,
-                .primitiveOffset = 0,
-                .firstVertex = 0,
-                .transformOffset = 0
-        };
-
-        const vk::AccelerationStructureBuildRangeInfoKHR* p_top_BuildRangeInfos[] = { &top_buildRangeInfo };
-        executeSingleTimeCommand([&](const vk::CommandBuffer& singleTimeCommandBuffer) {
-            singleTimeCommandBuffer.buildAccelerationStructuresKHR(1, &top_accel_build_info, p_top_BuildRangeInfos, dynamicDispatchLoader);
-            });
-        
-        {
-            void* data = device.mapMemory(sphere_buffer.memory, 0, sphere_buffer_size);
-            memcpy(data, scene.spheres, sizeof(Sphere) * scene.sphereAmount);
-            device.unmapMemory(sphere_buffer.memory);
-        }
-
         m_next_image_semaphores_indices.resize(swapchain_images.size());
         std::iota(m_next_image_semaphores_indices.begin(), m_next_image_semaphores_indices.end(), 0);
         m_next_image_free_semaphore_index = swapchain_images.size();
@@ -1279,8 +1337,6 @@ private:
     [[nodiscard]] vk::ImageMemoryBarrier getImagePipelineBarrier(
             const vk::AccessFlags srcAccessFlags, const vk::AccessFlags dstAccessFlags,
             const vk::ImageLayout &oldLayout, const vk::ImageLayout &newLayout, const vk::Image &image) const;
-
-    void executeSingleTimeCommand(const std::function<void(const vk::CommandBuffer &singleTimeCommandBuffer)> &c);
 
     void updateRenderCallInfoBuffer(const RenderCallInfo &renderCallInfo, int index);
 };

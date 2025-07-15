@@ -89,37 +89,6 @@ vk::ImageMemoryBarrier Vulkan::getImagePipelineBarrier(
 }
 
 
-void Vulkan::executeSingleTimeCommand(const std::function<void(const vk::CommandBuffer &singleTimeCommandBuffer)> &c) {
-    vk::CommandBuffer singleTimeCommandBuffer = device.allocateCommandBuffers(
-            {
-                    .commandPool = commandPool,
-                    .level = vk::CommandBufferLevel::ePrimary,
-                    .commandBufferCount = 1
-            }).front();
-
-    vk::CommandBufferBeginInfo beginInfo = {
-            .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit
-    };
-
-    singleTimeCommandBuffer.begin(&beginInfo);
-
-    c(singleTimeCommandBuffer);
-
-    singleTimeCommandBuffer.end();
-
-
-    vk::SubmitInfo submitInfo = {
-            .commandBufferCount = 1,
-            .pCommandBuffers = &singleTimeCommandBuffer
-    };
-
-    vk::Fence f = device.createFence({});
-    computeQueue.submit(1, &submitInfo, f);
-    device.waitForFences(1, &f, true, UINT64_MAX);
-
-    device.destroyFence(f);
-    device.freeCommandBuffers(commandPool, singleTimeCommandBuffer);
-}
 
 void Vulkan::updateRenderCallInfoBuffer(const RenderCallInfo &renderCallInfo, int index) {
     void* data = device.mapMemory(renderCallInfoBuffers[index].memory, 0, sizeof(RenderCallInfo));
@@ -159,7 +128,8 @@ void Vulkan::write_to_file(std::filesystem::path path) {
 
     device.bindBufferMemory(buffer, memory, 0);
 
-    executeSingleTimeCommand(
+    vulkan::execute_single_time_command(
+        device, computeQueue, commandPool,
         [this, buffer,width,height](vk::CommandBuffer cmd) {
             cmd.pipelineBarrier(vk::PipelineStageFlagBits::eAllCommands,
                 vk::PipelineStageFlagBits::eAllCommands,
