@@ -4,8 +4,6 @@
 #include <thread>
 #include <charconv>
 
-#include "vulkan.h"
-
 #include "ray_trace.h"
 
 int main(int argc, const char** argv) {

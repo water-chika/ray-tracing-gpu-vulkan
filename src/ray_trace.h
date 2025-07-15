@@ -1,8 +1,6 @@
 #pragma once
 
-#include "vulkan.h"
-
-#include <iostream>
+#include <cstdint>
 
 extern "C"
 __declspec(dllexport)

@@ -4,6 +4,10 @@
 
 #include "window.hpp"
 
+#include "vulkan.h"
+
+#include <iostream>
+
 extern "C"
 __declspec(dllexport)
 void ray_trace(
@@ -112,7 +116,7 @@ void ray_trace(
     auto [sphere_buffer, sphere_buffer_size] = vulkan::create_sphere_buffer(device, memory_properties);
     auto render_call_info_buffers = vulkan::create_render_call_info_buffers(device, swapchain_images.size(), memory_properties);
 
-    auto rt_descriptor_set = vulkan::create_descriptor_set(device, swapchain_images.size(),
+    auto rt_descriptor_sets = vulkan::create_descriptor_set(device, swapchain_images.size(),
         rt_descriptor_set_layout, rt_descriptor_pool, render_target_image, top_accel.accelerationStructure, sphere_buffer, summed_image, render_call_info_buffers);
 
     auto rt_pipeline_layout = vulkan::create_pipeline_layout(device, rt_descriptor_set_layout);
@@ -126,6 +130,14 @@ void ray_trace(
     physical_device.getProperties2(&physicalDeviceProperties2);
 
     auto rt_pipeline = vulkan::create_rt_pipeline(device, rayTracingPipelinePropertiesKhr.maxRayRecursionDepth, rt_pipeline_layout, dynamicDispatchLoader);
+
+    auto [shader_binding_table_buffer, sbtRayGenAddressRegion, sbtMissAddressRegion, sbtHitAddressRegion] = vulkan::create_shader_binding_table_buffer(device, rt_pipeline, rayTracingPipelinePropertiesKhr, memory_properties, dynamicDispatchLoader);
+
+    auto command_buffers = vulkan::create_command_buffer(
+        device, command_pool, swapchain_images.size(), swapchain_images, compute_queue_family,
+        render_target_image.image, summed_image.image, rt_pipeline, rt_descriptor_sets, rt_pipeline_layout,
+        sbtRayGenAddressRegion, sbtMissAddressRegion, sbtHitAddressRegion,
+        width, height, dynamicDispatchLoader);
 
     while (!view_window.should_close()) {
         scene = generateRandomScene();
@@ -147,23 +159,21 @@ void ray_trace(
             }
         );
         Vulkan vulkan(
-            instance, surface,
-            physical_device, memory_properties,
+            memory_properties,
             device, compute_queue, present_queue,
             {compute_queue_family, present_queue_family},
             command_pool,
-            swapchain,swapchain_images, swapchain_image_views,swapchain_extent,
-            render_target_image, summed_image,
+            swapchain,swapchain_images, swapchain_extent,
+            summed_image,
             fences,
             next_image_semaphores, render_image_semaphores,
             aabbs, aabb_buffer,
-            bottom_accel, bottom_accel_build_info,
-            top_accel.accelerationStructure, top_accel_build_info,
-            rt_descriptor_set_layout, rt_descriptor_pool,
+            bottom_accel_build_info,
+            top_accel_build_info,
             sphere_buffer, sphere_buffer_size,
             render_call_info_buffers,
-            rt_descriptor_set,
-            rt_pipeline_layout, rt_pipeline,
+            command_buffers,
+            dynamicDispatchLoader,
             settings, scene
         );
 
@@ -206,6 +216,8 @@ void ray_trace(
         view_window.poll_events();
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
+
+    vulkan::destroy_buffer(device, shader_binding_table_buffer);
 
     device.destroyPipeline(rt_pipeline);
     device.destroyPipelineLayout(rt_pipeline_layout);
