@@ -94,11 +94,38 @@ void ray_trace(
     auto dynamicDispatchLoader = vk::detail::DispatchLoaderDynamic(instance, vkGetInstanceProcAddr, device);
 
     // ACCELERATION STRUCTURE META INFO
-    vk::AccelerationStructureGeometryKHR geometry = {
+    vk::AccelerationStructureGeometryKHR aabbs_geometry = {
             .geometryType = vk::GeometryTypeKHR::eAabbs,
             .flags = vk::GeometryFlagBitsKHR::eOpaque
     };
-    auto [bottom_accel, bottom_accel_build_info] = vulkan::createBottomAccelerationStructure(device, aabb_buffer, aabbs.size(), geometry, memory_properties, dynamicDispatchLoader);
+    auto [bottom_accel, bottom_accel_build_info] = vulkan::createBottomAccelerationStructure(device, aabb_buffer, aabbs.size(), aabbs_geometry, memory_properties, dynamicDispatchLoader);
+    // ACCELERATION STRUCTURE META INFO
+    vk::AccelerationStructureGeometryKHR instances_geometry = {
+            .geometryType = vk::GeometryTypeKHR::eInstances,
+            .flags = vk::GeometryFlagBitsKHR::eOpaque
+    };
+    auto [top_accel, top_accel_build_info] = vulkan::createTopAccelerationStructure(device, bottom_accel.accelerationStructure, instances_geometry, memory_properties, dynamicDispatchLoader);
+
+    auto rt_descriptor_set_layout = vulkan::create_descriptor_set_layout(device);
+    auto rt_descriptor_pool = vulkan::create_descriptor_pool(device, swapchain_images.size());
+
+    auto [sphere_buffer, sphere_buffer_size] = vulkan::create_sphere_buffer(device, memory_properties);
+    auto render_call_info_buffers = vulkan::create_render_call_info_buffers(device, swapchain_images.size(), memory_properties);
+
+    auto rt_descriptor_set = vulkan::create_descriptor_set(device, swapchain_images.size(),
+        rt_descriptor_set_layout, rt_descriptor_pool, render_target_image, top_accel.accelerationStructure, sphere_buffer, summed_image, render_call_info_buffers);
+
+    auto rt_pipeline_layout = vulkan::create_pipeline_layout(device, rt_descriptor_set_layout);
+
+    vk::PhysicalDeviceRayTracingPipelinePropertiesKHR rayTracingPipelinePropertiesKhr = {};
+
+    vk::PhysicalDeviceProperties2 physicalDeviceProperties2 = {
+            .pNext = &rayTracingPipelinePropertiesKhr
+    };
+
+    physical_device.getProperties2(&physicalDeviceProperties2);
+
+    auto rt_pipeline = vulkan::create_rt_pipeline(device, rayTracingPipelinePropertiesKhr.maxRayRecursionDepth, rt_pipeline_layout, dynamicDispatchLoader);
 
     while (!view_window.should_close()) {
         scene = generateRandomScene();
@@ -131,6 +158,12 @@ void ray_trace(
             next_image_semaphores, render_image_semaphores,
             aabbs, aabb_buffer,
             bottom_accel, bottom_accel_build_info,
+            top_accel.accelerationStructure, top_accel_build_info,
+            rt_descriptor_set_layout, rt_descriptor_pool,
+            sphere_buffer, sphere_buffer_size,
+            render_call_info_buffers,
+            rt_descriptor_set,
+            rt_pipeline_layout, rt_pipeline,
             settings, scene
         );
 
@@ -174,6 +207,16 @@ void ray_trace(
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
 
+    device.destroyPipeline(rt_pipeline);
+    device.destroyPipelineLayout(rt_pipeline_layout);
+
+    std::ranges::for_each(render_call_info_buffers, [device](auto buffer) {vulkan::destroy_buffer(device, buffer); });
+    vulkan::destroy_buffer(device, sphere_buffer);
+
+    device.destroyDescriptorPool(rt_descriptor_pool);
+    device.destroyDescriptorSetLayout(rt_descriptor_set_layout);
+
+    vulkan::destroy_acceleration_structure(device, top_accel, dynamicDispatchLoader);
     vulkan::destroy_acceleration_structure(device, bottom_accel, dynamicDispatchLoader);
 
     vulkan::destroy_buffer(device, aabb_buffer);

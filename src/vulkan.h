@@ -17,6 +17,9 @@
 #include <string>
 #include <ranges>
 #include <numeric>
+#include <fstream>
+
+#include "shader_path.hpp"
 
 struct VulkanImage {
     vk::Image image;
@@ -451,6 +454,411 @@ namespace vulkan {
         vulkan::destroy_buffer(device, accelerationStructure.scratchBuffer);
         vulkan::destroy_buffer(device, accelerationStructure.instancesBuffer);
     }
+
+
+    inline auto createTopAccelerationStructure(vk::Device device,
+        vk::AccelerationStructureKHR bottom_accel,
+        vk::AccelerationStructureGeometryKHR geometry,
+        const vk::PhysicalDeviceMemoryProperties& memory_properties,
+        vk::detail::DispatchLoaderDynamic& dynamicDispatchLoader) {
+
+        geometry.geometry.instances.sType = vk::StructureType::eAccelerationStructureGeometryInstancesDataKHR;
+        geometry.geometry.instances.arrayOfPointers = false;
+
+
+        vk::AccelerationStructureBuildGeometryInfoKHR buildInfo = {
+                .type = vk::AccelerationStructureTypeKHR::eTopLevel,
+                .flags = vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace,
+                .mode = vk::BuildAccelerationStructureModeKHR::eBuild,
+                .srcAccelerationStructure = nullptr,
+                .dstAccelerationStructure = nullptr,
+                .geometryCount = 1,
+                .pGeometries = &geometry,
+                .scratchData = {}
+        };
+
+
+        // CALCULATE REQUIRED SIZE FOR THE ACCELERATION STRUCTURE
+        vk::AccelerationStructureBuildSizesInfoKHR buildSizesInfo = device.getAccelerationStructureBuildSizesKHR(
+            vk::AccelerationStructureBuildTypeKHR::eDevice, buildInfo, { 1 }, dynamicDispatchLoader);
+
+        VulkanAccelerationStructure topAccelerationStructure{};
+        // ALLOCATE BUFFERS FOR ACCELERATION STRUCTURE
+        topAccelerationStructure.structureBuffer = vulkan::create_buffer(device, buildSizesInfo.accelerationStructureSize,
+            vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR,
+            vk::MemoryPropertyFlagBits::eDeviceLocal, memory_properties);
+
+        topAccelerationStructure.scratchBuffer = vulkan::create_buffer(device, buildSizesInfo.buildScratchSize,
+            vk::BufferUsageFlagBits::eStorageBuffer |
+            vk::BufferUsageFlagBits::eShaderDeviceAddress,
+            vk::MemoryPropertyFlagBits::eDeviceLocal, memory_properties);
+
+        // CREATE THE ACCELERATION STRUCTURE
+        vk::AccelerationStructureCreateInfoKHR createInfo = {
+                .buffer = topAccelerationStructure.structureBuffer.buffer,
+                .offset = 0,
+                .size = buildSizesInfo.accelerationStructureSize,
+                .type = vk::AccelerationStructureTypeKHR::eTopLevel
+        };
+
+        topAccelerationStructure.accelerationStructure =
+            device.createAccelerationStructureKHR(createInfo, nullptr, dynamicDispatchLoader);
+
+
+        // CREATE INSTANCE INFO & WRITE IN NEW BUFFER
+        std::array<std::array<float, 4>, 3> matrix = {
+                {
+                        {1.0f, 0.0f, 0.0f, 0.0f},
+                        {0.0f, 1.0f, 0.0f, 0.0f},
+                        {0.0f, 0.0f, 1.0f, 0.0f}
+                } };
+
+        vk::AccelerationStructureInstanceKHR accelerationStructureInstance = {
+                .transform = {.matrix = matrix},
+                .instanceCustomIndex = 0,
+                .mask = 0xFF,
+                .instanceShaderBindingTableRecordOffset = 0,
+                .accelerationStructureReference = device.getAccelerationStructureAddressKHR(
+                        {.accelerationStructure = bottom_accel},
+                        dynamicDispatchLoader),
+        };
+
+        topAccelerationStructure.instancesBuffer = vulkan::create_buffer(
+            device,
+            sizeof(vk::AccelerationStructureInstanceKHR),
+            vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR |
+            vk::BufferUsageFlagBits::eShaderDeviceAddress,
+            vk::MemoryPropertyFlagBits::eDeviceLocal | vk::MemoryPropertyFlagBits::eHostCoherent |
+            vk::MemoryPropertyFlagBits::eHostVisible,
+            memory_properties);
+
+        void* pInstancesBuffer = device.mapMemory(topAccelerationStructure.instancesBuffer.memory, 0,
+            sizeof(vk::AccelerationStructureInstanceKHR));
+        memcpy(pInstancesBuffer, &accelerationStructureInstance, sizeof(vk::AccelerationStructureInstanceKHR));
+        device.unmapMemory(topAccelerationStructure.instancesBuffer.memory);
+
+
+        // FILL IN THE REMAINING META INFO
+        buildInfo.dstAccelerationStructure = topAccelerationStructure.accelerationStructure;
+        buildInfo.scratchData.deviceAddress = device.getBufferAddress(
+            { .buffer = topAccelerationStructure.scratchBuffer.buffer });
+
+        geometry.geometry.instances.data.deviceAddress = device.getBufferAddress(
+            { .buffer = topAccelerationStructure.instancesBuffer.buffer });
+
+        return std::tuple{ topAccelerationStructure, buildInfo };
+    }
+
+
+    inline auto create_descriptor_set_layout(vk::Device device) {
+        std::vector<vk::DescriptorSetLayoutBinding> bindings = {
+                {
+                        .binding = 0,
+                        .descriptorType = vk::DescriptorType::eStorageImage,
+                        .descriptorCount = 1,
+                        .stageFlags = vk::ShaderStageFlagBits::eRaygenKHR
+                },
+                {
+                        .binding = 1,
+                        .descriptorType = vk::DescriptorType::eAccelerationStructureKHR,
+                        .descriptorCount = 1,
+                        .stageFlags = vk::ShaderStageFlagBits::eRaygenKHR
+                },
+                {
+                        .binding = 2,
+                        .descriptorType = vk::DescriptorType::eUniformBuffer,
+                        .descriptorCount = 1,
+                        .stageFlags = vk::ShaderStageFlagBits::eIntersectionKHR |
+                                      vk::ShaderStageFlagBits::eClosestHitKHR
+                },
+                {
+                        .binding = 3,
+                        .descriptorType = vk::DescriptorType::eStorageImage,
+                        .descriptorCount = 1,
+                        .stageFlags = vk::ShaderStageFlagBits::eRaygenKHR
+                },
+                {
+                        .binding = 4,
+                        .descriptorType = vk::DescriptorType::eUniformBuffer,
+                        .descriptorCount = 1,
+                        .stageFlags = vk::ShaderStageFlagBits::eRaygenKHR
+                }
+        };
+
+        auto rtDescriptorSetLayout = device.createDescriptorSetLayout(
+            {
+                    .bindingCount = static_cast<uint32_t>(bindings.size()),
+                    .pBindings = bindings.data()
+            });
+        return rtDescriptorSetLayout;
+    }
+
+    inline auto create_descriptor_pool(vk::Device device, uint32_t swapchain_image_count) {
+        std::vector<vk::DescriptorPoolSize> poolSizes = {
+                {
+                        .type = vk::DescriptorType::eStorageImage,
+                        .descriptorCount = 2 * swapchain_image_count
+                },
+                {
+                        .type = vk::DescriptorType::eAccelerationStructureKHR,
+                        .descriptorCount = 1 * swapchain_image_count
+                },
+                {
+                        .type = vk::DescriptorType::eUniformBuffer,
+                        .descriptorCount = 2 * swapchain_image_count
+                }
+        };
+
+        auto rtDescriptorPool = device.createDescriptorPool(
+            {
+                    .maxSets = swapchain_image_count,
+                    .poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
+                    .pPoolSizes = poolSizes.data()
+            });
+        return rtDescriptorPool;
+    }
+
+
+    inline auto create_sphere_buffer(vk::Device device, const vk::PhysicalDeviceMemoryProperties& memory_properties) {
+        const vk::DeviceSize bufferSize = sizeof(Sphere) * MAX_SPHERE_AMOUNT;
+
+        auto sphereBuffer = vulkan::create_buffer(device, bufferSize,
+            vk::BufferUsageFlagBits::eUniformBuffer,
+            vk::MemoryPropertyFlagBits::eHostVisible |
+            vk::MemoryPropertyFlagBits::eHostCoherent |
+            vk::MemoryPropertyFlagBits::eDeviceLocal, memory_properties);
+        return std::tuple{ sphereBuffer, bufferSize };
+    }
+
+    inline auto create_render_call_info_buffers(vk::Device device, uint32_t swapchain_image_count, const vk::PhysicalDeviceMemoryProperties& memory_properties) {
+        std::vector<VulkanBuffer> renderCallInfoBuffers(swapchain_image_count);
+        std::ranges::generate(
+            renderCallInfoBuffers,
+            [device, &memory_properties]() {
+                return vulkan::create_buffer(device, sizeof(RenderCallInfo), vk::BufferUsageFlagBits::eUniformBuffer,
+                    vk::MemoryPropertyFlagBits::eHostVisible |
+                    vk::MemoryPropertyFlagBits::eHostCoherent |
+                    vk::MemoryPropertyFlagBits::eDeviceLocal,
+                    memory_properties);
+            });
+        return renderCallInfoBuffers;
+    }
+
+    inline auto create_descriptor_set(vk::Device device, uint32_t swapchain_image_count,
+        vk::DescriptorSetLayout rtDescriptorSetLayout,
+        vk::DescriptorPool rtDescriptorPool,
+        const VulkanImage& renderTargetImage,
+        vk::AccelerationStructureKHR top_acceleration,
+        const VulkanBuffer& sphereBuffer,
+        const VulkanImage& summedPixelColorImage,
+        const auto& renderCallInfoBuffers) {
+        std::vector<vk::DescriptorSetLayout> layouts(swapchain_image_count);
+        std::ranges::fill(layouts, rtDescriptorSetLayout);
+        auto rtDescriptorSets = device.allocateDescriptorSets(
+            vk::DescriptorSetAllocateInfo{}
+            .setDescriptorPool(rtDescriptorPool)
+            .setSetLayouts(layouts)
+        );
+
+        vk::DescriptorImageInfo renderTargetImageInfo = {
+                .imageView = renderTargetImage.imageView,
+                .imageLayout = vk::ImageLayout::eGeneral
+        };
+
+        vk::WriteDescriptorSetAccelerationStructureKHR accelerationStructureInfo = {
+                .accelerationStructureCount = 1,
+                .pAccelerationStructures = &top_acceleration
+        };
+
+        vk::DescriptorBufferInfo sphereBufferInfo = {
+                .buffer = sphereBuffer.buffer,
+                .offset = 0,
+                .range = sizeof(Sphere) * MAX_SPHERE_AMOUNT
+        };
+
+        vk::DescriptorImageInfo summedPixelColorImageInfo = {
+                .imageView = summedPixelColorImage.imageView,
+                .imageLayout = vk::ImageLayout::eGeneral
+        };
+
+        std::vector<vk::DescriptorBufferInfo> renderCallInfoBufferInfos(swapchain_image_count);
+
+        std::vector<vk::WriteDescriptorSet> descriptorWrites{};
+        for (int i = 0; i < swapchain_image_count; i++) {
+            auto set = rtDescriptorSets[i];
+            descriptorWrites.push_back(
+                {
+                        .dstSet = set,
+                        .dstBinding = 0,
+                        .dstArrayElement = 0,
+                        .descriptorCount = 1,
+                        .descriptorType = vk::DescriptorType::eStorageImage,
+                        .pImageInfo = &renderTargetImageInfo
+                });
+            descriptorWrites.push_back(
+                {
+                        .pNext = &accelerationStructureInfo,
+                        .dstSet = set,
+                        .dstBinding = 1,
+                        .dstArrayElement = 0,
+                        .descriptorCount = 1,
+                        .descriptorType = vk::DescriptorType::eAccelerationStructureKHR
+                });
+            descriptorWrites.push_back(
+                {
+                        .dstSet = set,
+                        .dstBinding = 2,
+                        .dstArrayElement = 0,
+                        .descriptorCount = 1,
+                        .descriptorType = vk::DescriptorType::eUniformBuffer,
+                        .pBufferInfo = &sphereBufferInfo
+                });
+            descriptorWrites.push_back(
+                {
+                        .dstSet = set,
+                        .dstBinding = 3,
+                        .dstArrayElement = 0,
+                        .descriptorCount = 1,
+                        .descriptorType = vk::DescriptorType::eStorageImage,
+                        .pImageInfo = &summedPixelColorImageInfo
+                });
+            renderCallInfoBufferInfos[i] = vk::DescriptorBufferInfo{}
+                .setBuffer(renderCallInfoBuffers[i].buffer)
+                .setRange(vk::WholeSize);
+            descriptorWrites.push_back(
+                {
+                        .dstSet = set,
+                        .dstBinding = 4,
+                        .dstArrayElement = 0,
+                        .descriptorCount = 1,
+                        .descriptorType = vk::DescriptorType::eUniformBuffer,
+                        .pBufferInfo = &renderCallInfoBufferInfos[i]
+                });
+        };
+
+        device.updateDescriptorSets(static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(),
+            0, nullptr);
+
+        return rtDescriptorSets;
+    }
+
+    inline auto create_pipeline_layout(vk::Device device, vk::DescriptorSetLayout rtDescriptorSetLayout) {
+        auto rtPipelineLayout = device.createPipelineLayout(
+            {
+                    .setLayoutCount = 1,
+                    .pSetLayouts = &rtDescriptorSetLayout,
+                    .pushConstantRangeCount = 0,
+                    .pPushConstantRanges = nullptr
+            });
+        return rtPipelineLayout;
+    }
+
+    inline std::vector<char> readBinaryFile(const std::string& path) {
+        std::ifstream file(path, std::ios::ate | std::ios::binary);
+
+        if (!file.is_open())
+            throw std::runtime_error("[Error] Failed to open file at '" + path + "'!");
+
+        size_t fileSize = (size_t)file.tellg();
+        std::vector<char> buffer(fileSize);
+
+        file.seekg(0);
+        file.read(buffer.data(), fileSize);
+
+        file.close();
+
+        return buffer;
+    }
+
+    inline vk::ShaderModule createShaderModule(vk::Device device, const std::string& path) {
+        std::vector<char> shaderCode = readBinaryFile(path);
+
+        vk::ShaderModuleCreateInfo shaderModuleCreateInfo = {
+                .codeSize = shaderCode.size(),
+                .pCode = reinterpret_cast<const uint32_t*>(shaderCode.data())
+        };
+
+        return device.createShaderModule(shaderModuleCreateInfo);
+    }
+
+    inline auto create_rt_pipeline(vk::Device device, uint32_t max_depth, vk::PipelineLayout pipeline_layout, vk::detail::DispatchLoaderDynamic& dynamicDispatchLoader) {
+        vk::ShaderModule raygenModule = createShaderModule(device, rgen_shader_path);
+        vk::ShaderModule intModule = createShaderModule(device, rint_shader_path);
+        vk::ShaderModule chitModule = createShaderModule(device, rchit_shader_path);
+        vk::ShaderModule missModule = createShaderModule(device, rmiss_shader_path);
+
+        std::vector<vk::PipelineShaderStageCreateInfo> stages = {
+                {
+                        .stage = vk::ShaderStageFlagBits::eRaygenKHR,
+                        .module = raygenModule,
+                        .pName = "main"
+                },
+                {
+                        .stage = vk::ShaderStageFlagBits::eIntersectionKHR,
+                        .module = intModule,
+                        .pName = "main"
+                },
+                {
+                        .stage = vk::ShaderStageFlagBits::eMissKHR,
+                        .module = missModule,
+                        .pName = "main"
+                },
+                {
+                        .stage = vk::ShaderStageFlagBits::eClosestHitKHR,
+                        .module = chitModule,
+                        .pName = "main"
+                }
+        };
+
+        std::vector<vk::RayTracingShaderGroupCreateInfoKHR> groups = {
+                {
+                        .type = vk::RayTracingShaderGroupTypeKHR::eGeneral,
+                        .generalShader = 0,
+                        .closestHitShader = VK_SHADER_UNUSED_KHR,
+                        .anyHitShader = VK_SHADER_UNUSED_KHR,
+                        .intersectionShader = VK_SHADER_UNUSED_KHR
+                },
+                {
+                        .type = vk::RayTracingShaderGroupTypeKHR::eGeneral,
+                        .generalShader = 2,
+                        .closestHitShader = VK_SHADER_UNUSED_KHR,
+                        .anyHitShader = VK_SHADER_UNUSED_KHR,
+                        .intersectionShader = VK_SHADER_UNUSED_KHR
+                },
+                {
+                        .type = vk::RayTracingShaderGroupTypeKHR::eProceduralHitGroup,
+                        .generalShader = VK_SHADER_UNUSED_KHR,
+                        .closestHitShader = 3,
+                        .anyHitShader = VK_SHADER_UNUSED_KHR,
+                        .intersectionShader = 1
+                }
+        };
+
+        vk::PipelineLibraryCreateInfoKHR libraryCreateInfo = { .libraryCount = 0 };
+
+        vk::RayTracingPipelineCreateInfoKHR pipelineCreateInfo = {
+                .stageCount = static_cast<uint32_t>(stages.size()),
+                .pStages = stages.data(),
+                .groupCount = static_cast<uint32_t>(groups.size()),
+                .pGroups = groups.data(),
+                .maxPipelineRayRecursionDepth = max_depth,
+                .pLibraryInfo = &libraryCreateInfo,
+                .pLibraryInterface = nullptr,
+                .layout = pipeline_layout,
+                .basePipelineHandle = VK_NULL_HANDLE,
+                .basePipelineIndex = 0
+        };
+
+        auto rtPipeline = device.createRayTracingPipelineKHR(nullptr, nullptr, pipelineCreateInfo,
+            nullptr, dynamicDispatchLoader).value;
+
+        device.destroyShaderModule(raygenModule);
+        device.destroyShaderModule(chitModule);
+        device.destroyShaderModule(missModule);
+        device.destroyShaderModule(intModule);
+
+        return rtPipeline;
+    }
 }
 
 
@@ -469,6 +877,12 @@ public:
         auto next_image_semaphores, auto render_image_semaphores,
         auto& aabbs, VulkanBuffer& aabb_buffer,
         VulkanAccelerationStructure bottom_accel, vk::AccelerationStructureBuildGeometryInfoKHR bottom_accel_build_info,
+        vk::AccelerationStructureKHR top_accel,vk::AccelerationStructureBuildGeometryInfoKHR top_accel_build_info,
+        vk::DescriptorSetLayout rt_descriptor_set_layout, vk::DescriptorPool rt_descriptor_pool,
+        VulkanBuffer sphere_buffer, uint32_t sphere_buffer_size,
+        auto& render_call_buffers,
+        auto& rt_descriptor_sets,
+        vk::PipelineLayout rt_pipeline_layout, vk::Pipeline rt_pipeline,
         VulkanSettings settings, Scene scene) :
         instance{instance}, surface{surface},
         physicalDevice{ physical_device }, m_memory_properties{memory_properties},
@@ -480,7 +894,11 @@ public:
         m_fences{fences},
         m_next_image_semaphores{ next_image_semaphores }, m_render_image_semaphores{ render_image_semaphores },
         aabbs{aabbs}, aabbBuffer{ aabb_buffer },
-        bottomAccelerationStructure{bottom_accel},
+        m_top_acceleration{top_accel},
+        rtDescriptorSetLayout{ rt_descriptor_set_layout }, rtDescriptorPool{ rt_descriptor_pool },
+        sphereBuffer{ sphere_buffer }, renderCallInfoBuffers{ render_call_buffers },
+        rtDescriptorSets{rt_descriptor_sets},
+        rtPipelineLayout{ rt_pipeline_layout }, rtPipeline{ rt_pipeline },
         settings(settings), scene(scene),
         m_width(settings.windowWidth), m_height(settings.windowHeight)
     {
@@ -533,16 +951,24 @@ public:
             singleTimeCommandBuffer.buildAccelerationStructuresKHR(1, &bottom_accel_build_info, pBuildRangeInfos, dynamicDispatchLoader);
             });
 
-        createTopAccelerationStructure();
+        // BUILD THE ACCELERATION STRUCTURE
+        vk::AccelerationStructureBuildRangeInfoKHR top_buildRangeInfo = {
+                .primitiveCount = 1,
+                .primitiveOffset = 0,
+                .firstVertex = 0,
+                .transformOffset = 0
+        };
 
-        createSphereBuffer();
-        createRenderCallInfoBuffer();
-
-        createDescriptorSetLayout();
-        createDescriptorPool();
-        createDescriptorSet();
-        createPipelineLayout();
-        createRTPipeline();
+        const vk::AccelerationStructureBuildRangeInfoKHR* p_top_BuildRangeInfos[] = { &top_buildRangeInfo };
+        executeSingleTimeCommand([&](const vk::CommandBuffer& singleTimeCommandBuffer) {
+            singleTimeCommandBuffer.buildAccelerationStructuresKHR(1, &top_accel_build_info, p_top_BuildRangeInfos, dynamicDispatchLoader);
+            });
+        
+        {
+            void* data = device.mapMemory(sphereBuffer.memory, 0, sphere_buffer_size);
+            memcpy(data, scene.spheres, sizeof(Sphere) * scene.sphereAmount);
+            device.unmapMemory(sphereBuffer.memory);
+        }
 
         createShaderBindingTable();
         createCommandBuffer();
@@ -643,8 +1069,7 @@ private:
 
     VulkanBuffer aabbBuffer;
 
-    VulkanAccelerationStructure bottomAccelerationStructure;
-    VulkanAccelerationStructure topAccelerationStructure;
+    vk::AccelerationStructureKHR m_top_acceleration;
 
     VulkanBuffer shaderBindingTableBuffer;
     vk::StridedDeviceAddressRegionKHR sbtRayGenAddressRegion, sbtHitAddressRegion, sbtMissAddressRegion;
@@ -654,12 +1079,6 @@ private:
 
     int m_width;
     int m_height;
-
-    void createDescriptorSetLayout();
-
-    void createDescriptorPool();
-
-    void createDescriptorSet();
 
     void createPipelineLayout();
 
@@ -676,8 +1095,6 @@ private:
 
     void executeSingleTimeCommand(const std::function<void(const vk::CommandBuffer &singleTimeCommandBuffer)> &c);
 
-    void createTopAccelerationStructure();
-
     void destroyAccelerationStructure(const VulkanAccelerationStructure &accelerationStructure);
 
     [[nodiscard]] vk::ShaderModule createShaderModule(const std::string &path) const;
@@ -685,10 +1102,6 @@ private:
     void createShaderBindingTable();
 
     [[nodiscard]] vk::PhysicalDeviceRayTracingPipelinePropertiesKHR getRayTracingProperties() const;
-
-    void createSphereBuffer();
-
-    void createRenderCallInfoBuffer();
 
     void updateRenderCallInfoBuffer(const RenderCallInfo &renderCallInfo, int index);
 
