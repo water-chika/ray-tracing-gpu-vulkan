@@ -15,13 +15,6 @@ int main(int argc, const char** argv) {
     uint32_t width = 1920;
     uint32_t height = 1080;
 
-    if (argc >= 2) {
-        std::from_chars(argv[1], argv[1] + strlen(argv[1]), samples);
-    }
-
-    if (argc >= 3) {
-        std::from_chars(argv[2], argv[2] + strlen(argv[2]), samplesPerRenderCall);
-    }
     for (int i = 1; i < argc; i++) {
         if (argv[i] == "--help"s) {
             std::cout << "--help                            # Show this help infomation" << std::endl;
