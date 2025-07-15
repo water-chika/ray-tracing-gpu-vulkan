@@ -57,10 +57,12 @@ void ray_trace(
     const vk::Format format = vk::Format::eR8G8B8A8Unorm;
     const vk::ColorSpaceKHR color_space = vk::ColorSpaceKHR::eSrgbNonlinear;
     vk::PresentModeKHR present_mode = vk::PresentModeKHR::eImmediate;
+    auto image_count = std::max(surface_capabilities.minImageCount, 4u);
     auto swapchain = vulkan::create_swapchain(physical_device, surface, device,
         surface_capabilities.minImageCount, format, color_space, present_mode, swapchain_extent, surface_capabilities.currentTransform);
 
     auto swapchain_images = device.getSwapchainImagesKHR(swapchain);
+    auto swapchain_image_count = swapchain_images.size();
     std::vector<vk::ImageView> swapchain_image_views(swapchain_images.size());
     std::ranges::transform(swapchain_images, swapchain_image_views.begin(),
         [device, format](auto swapChainImage) {
@@ -82,7 +84,27 @@ void ray_trace(
 
     vk::PhysicalDeviceMemoryProperties memory_properties = physical_device.getMemoryProperties();
 
-    auto [render_target_image, summed_image] = vulkan::create_images(device, vk::Extent3D{ swapchain_extent.width, swapchain_extent.height, 1 }, memory_properties);
+    auto render_target_images = std::vector<VulkanImage>(swapchain_image_count);
+    auto summed_images = std::vector<VulkanImage>(swapchain_image_count);
+    {
+        auto extent = vk::Extent3D{ swapchain_extent.width, swapchain_extent.height, 1 };
+        std::ranges::generate(
+            render_target_images,
+            [device, extent, &memory_properties]() {
+                return vulkan::create_image(
+                    device, extent, vk::Format::eR8G8B8A8Unorm, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc, memory_properties
+                    );
+            }
+            );
+        std::ranges::generate(
+            summed_images,
+            [device, extent, &memory_properties]() {
+                return vulkan::create_image(
+                    device, extent, vk::Format::eR32G32B32A32Sfloat, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferDst, memory_properties
+                );
+            }
+        );
+    }
 
     auto fences = vulkan::create_fences(device, swapchain_images.size());
 
@@ -117,7 +139,7 @@ void ray_trace(
     auto render_call_info_buffers = vulkan::create_render_call_info_buffers(device, swapchain_images.size(), memory_properties);
 
     auto rt_descriptor_sets = vulkan::create_descriptor_set(device, swapchain_images.size(),
-        rt_descriptor_set_layout, rt_descriptor_pool, render_target_image, top_accel.accelerationStructure, sphere_buffer, summed_image, render_call_info_buffers);
+        rt_descriptor_set_layout, rt_descriptor_pool, render_target_images, top_accel.accelerationStructure, sphere_buffer, summed_images, render_call_info_buffers);
 
     auto rt_pipeline_layout = vulkan::create_pipeline_layout(device, rt_descriptor_set_layout);
 
@@ -135,7 +157,7 @@ void ray_trace(
 
     auto command_buffers = vulkan::create_command_buffer(
         device, command_pool, swapchain_images.size(), swapchain_images, compute_queue_family,
-        render_target_image.image, summed_image.image, rt_pipeline, rt_descriptor_sets, rt_pipeline_layout,
+        render_target_images, summed_images, rt_pipeline, rt_descriptor_sets, rt_pipeline_layout,
         sbtRayGenAddressRegion, sbtMissAddressRegion, sbtHitAddressRegion,
         width, height, dynamicDispatchLoader);
 
@@ -164,7 +186,7 @@ void ray_trace(
             {compute_queue_family, present_queue_family},
             command_pool,
             swapchain,swapchain_images, swapchain_extent,
-            summed_image,
+            summed_images,
             fences,
             next_image_semaphores, render_image_semaphores,
             aabbs, aabb_buffer,
@@ -178,8 +200,6 @@ void ray_trace(
         );
 
         // RENDERING
-
-        auto renderBeginTime = std::chrono::steady_clock::now();
         int requiredRenderCalls = samples / samplesPerRenderCall;
 
         uint32_t number = 0;
@@ -198,11 +218,6 @@ void ray_trace(
             }
         }
 
-        vulkan.wait_render_complete();
-
-        auto renderTime = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - renderBeginTime).count();
-
         if (storeRenderResult) {
             std::cout << "Write to file:" << "render_result.png" << std::endl;
             vulkan.write_to_file("render_result.hdr");
@@ -216,6 +231,8 @@ void ray_trace(
         view_window.poll_events();
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
+
+    device.waitIdle();
 
     vulkan::destroy_buffer(device, shader_binding_table_buffer);
 
@@ -237,8 +254,8 @@ void ray_trace(
     std::ranges::for_each(render_image_semaphores, [device](auto semaphore) {device.destroySemaphore(semaphore); });
     std::ranges::for_each(fences, [device](auto fence) {device.destroyFence(fence); });
 
-    vulkan::destroy_image(device, render_target_image);
-    vulkan::destroy_image(device, summed_image);
+    std::ranges::for_each(render_target_images, [device](auto image) {vulkan::destroy_image(device, image); });
+    std::ranges::for_each(summed_images, [device](auto image) {vulkan::destroy_image(device, image); });
 
     std::ranges::for_each(swapchain_image_views, [device](auto swapChainImageView) {device.destroyImageView(swapChainImageView); });
     device.destroySwapchainKHR(swapchain);

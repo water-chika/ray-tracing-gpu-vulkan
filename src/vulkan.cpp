@@ -171,7 +171,7 @@ void Vulkan::write_to_file(std::filesystem::path path) {
                 .setSrcQueueFamilyIndex(computeQueueFamily)
                 .setDstAccessMask(vk::AccessFlagBits::eMemoryRead)
                 .setDstQueueFamilyIndex(computeQueueFamily)
-                .setImage(m_summed_image)
+                .setImage(m_summed_images[0].image)
                 .setOldLayout(vk::ImageLayout::eTransferSrcOptimal)
                 .setNewLayout(vk::ImageLayout::eTransferSrcOptimal)
                 .setSubresourceRange(
@@ -190,7 +190,7 @@ void Vulkan::write_to_file(std::filesystem::path path) {
                 .setImageExtent(vk::Extent3D{width,height,1})
             ;
             cmd.copyImageToBuffer(
-                m_summed_image,
+                m_summed_images[0].image,
                     vk::ImageLayout::eTransferSrcOptimal,
                     buffer,
                     1,

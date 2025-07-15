@@ -647,10 +647,10 @@ namespace vulkan {
     inline auto create_descriptor_set(vk::Device device, uint32_t swapchain_image_count,
         vk::DescriptorSetLayout rtDescriptorSetLayout,
         vk::DescriptorPool rtDescriptorPool,
-        const VulkanImage& renderTargetImage,
+        const auto& render_target_images,
         vk::AccelerationStructureKHR top_acceleration,
         const VulkanBuffer& sphereBuffer,
-        const VulkanImage& summedPixelColorImage,
+        const auto& summed_images,
         const auto& renderCallInfoBuffers) {
         std::vector<vk::DescriptorSetLayout> layouts(swapchain_image_count);
         std::ranges::fill(layouts, rtDescriptorSetLayout);
@@ -660,10 +660,14 @@ namespace vulkan {
             .setSetLayouts(layouts)
         );
 
-        vk::DescriptorImageInfo renderTargetImageInfo = {
-                .imageView = renderTargetImage.imageView,
-                .imageLayout = vk::ImageLayout::eGeneral
-        };
+        auto render_target_image_infos = std::vector<vk::DescriptorImageInfo>(swapchain_image_count);
+        std::ranges::transform(
+            render_target_images,
+            render_target_image_infos.begin(),
+            [](auto& image) {
+                return vk::DescriptorImageInfo{ .imageView = image.imageView, .imageLayout = vk::ImageLayout::eGeneral };
+            }
+        );
 
         vk::WriteDescriptorSetAccelerationStructureKHR accelerationStructureInfo = {
                 .accelerationStructureCount = 1,
@@ -676,10 +680,14 @@ namespace vulkan {
                 .range = sizeof(Sphere) * MAX_SPHERE_AMOUNT
         };
 
-        vk::DescriptorImageInfo summedPixelColorImageInfo = {
-                .imageView = summedPixelColorImage.imageView,
-                .imageLayout = vk::ImageLayout::eGeneral
-        };
+        auto summed_image_infos = std::vector<vk::DescriptorImageInfo>(swapchain_image_count);
+        std::ranges::transform(
+            summed_images,
+            summed_image_infos.begin(),
+            [](auto& image) {
+                return vk::DescriptorImageInfo{ .imageView = image.imageView, .imageLayout = vk::ImageLayout::eGeneral };
+            }
+        );
 
         std::vector<vk::DescriptorBufferInfo> renderCallInfoBufferInfos(swapchain_image_count);
 
@@ -693,7 +701,7 @@ namespace vulkan {
                         .dstArrayElement = 0,
                         .descriptorCount = 1,
                         .descriptorType = vk::DescriptorType::eStorageImage,
-                        .pImageInfo = &renderTargetImageInfo
+                        .pImageInfo = &render_target_image_infos[i]
                 });
             descriptorWrites.push_back(
                 {
@@ -720,7 +728,7 @@ namespace vulkan {
                         .dstArrayElement = 0,
                         .descriptorCount = 1,
                         .descriptorType = vk::DescriptorType::eStorageImage,
-                        .pImageInfo = &summedPixelColorImageInfo
+                        .pImageInfo = &summed_image_infos[i]
                 });
             renderCallInfoBufferInfos[i] = vk::DescriptorBufferInfo{}
                 .setBuffer(renderCallInfoBuffers[i].buffer)
@@ -970,7 +978,7 @@ namespace vulkan {
     }
 
     inline auto create_command_buffer(vk::Device device, vk::CommandPool commandPool, uint32_t swapchain_images_count, const auto& swapchain_images,
-        uint32_t queue_family, vk::Image render_target_image, vk::Image summed_image,
+        uint32_t queue_family, auto& render_target_images, auto& summed_images,
         vk::Pipeline pipeline, const auto& descriptor_sets, vk::PipelineLayout pipeline_layout,
         vk::StridedDeviceAddressRegionKHR sbtRayGenAddressRegion, vk::StridedDeviceAddressRegionKHR sbtMissAddressRegion, vk::StridedDeviceAddressRegionKHR sbtHitAddressRegion,
         uint32_t width, uint32_t height, vk::detail::DispatchLoaderDynamic& dynamicDispatchLoader) {
@@ -988,7 +996,7 @@ namespace vulkan {
             vk::CommandBufferBeginInfo beginInfo = {};
             commandBuffer.begin(&beginInfo);
 
-            record_ray_tracing(commandBuffer, queue_family, render_target_image,  summed_image,
+            record_ray_tracing(commandBuffer, queue_family, render_target_images[swapChainImageIndex].image, summed_images[swapChainImageIndex].image,
                 pipeline, descriptor_sets[swapChainImageIndex], pipeline_layout,
                 sbtRayGenAddressRegion, sbtMissAddressRegion, sbtHitAddressRegion,
                 width, height, dynamicDispatchLoader);
@@ -1002,7 +1010,7 @@ namespace vulkan {
                     .newLayout = vk::ImageLayout::eTransferSrcOptimal,
                     .srcQueueFamilyIndex = queue_family,
                     .dstQueueFamilyIndex = queue_family,
-                    .image = render_target_image,
+                    .image = render_target_images[swapChainImageIndex].image,
                     .subresourceRange = {
                             .aspectMask = vk::ImageAspectFlagBits::eColor,
                             .baseMipLevel = 0,
@@ -1054,7 +1062,7 @@ namespace vulkan {
                     }
             };
 
-            commandBuffer.copyImage(render_target_image, vk::ImageLayout::eTransferSrcOptimal, swapChainImage,
+            commandBuffer.copyImage(render_target_images[swapChainImageIndex].image, vk::ImageLayout::eTransferSrcOptimal, swapChainImage,
                 vk::ImageLayout::eTransferDstOptimal, 1, &imageCopy);
 
 
@@ -1097,7 +1105,7 @@ public:
         vk::CommandPool command_pool,
         vk::SwapchainKHR swapchain, auto swapchain_images,
         vk::Extent2D swapchain_extent,
-        VulkanImage summed_image,
+        auto& summed_images,
         auto fences,
         auto next_image_semaphores, auto render_image_semaphores,
         auto& aabbs, VulkanBuffer& aabb_buffer,
@@ -1113,35 +1121,42 @@ public:
         computeQueueFamily{ compute_present_queue_families.first }, presentQueueFamily{ compute_present_queue_families.second },
         commandPool{command_pool},
         swapChain{ swapchain }, swapChainExtent{ swapchain_extent },
-        m_summed_image{summed_image.image},
+        m_summed_images{summed_images},
         m_fences{fences},
         m_next_image_semaphores{ next_image_semaphores }, m_render_image_semaphores{ render_image_semaphores },
         renderCallInfoBuffers{ render_call_buffers },
         commandBuffers{command_buffers},
         settings(settings)
     {
-        executeSingleTimeCommand(
-            [this](vk::CommandBuffer commandBuffer) {
-                commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe,
-                    vk::PipelineStageFlagBits::eTransfer,
-                    vk::DependencyFlagBits::eByRegion,
-                    {}, {},
-                    getImagePipelineBarrier(
-                        vk::AccessFlagBits::eNoneKHR, vk::AccessFlagBits::eTransferWrite,
-                        vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, m_summed_image));
-                commandBuffer.clearColorImage(m_summed_image, vk::ImageLayout::eTransferDstOptimal,
-                    vk::ClearColorValue{},
-                    vk::ImageSubresourceRange{}
-                    .setAspectMask(vk::ImageAspectFlagBits::eColor)
-                    .setLayerCount(1)
-                    .setLevelCount(1));
-                commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
-                    vk::PipelineStageFlagBits::eRayTracingShaderKHR,
-                    vk::DependencyFlagBits::eByRegion,
-                    {}, {},
-                    getImagePipelineBarrier(
-                        vk::AccessFlagBits::eTransferWrite, vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite,
-                        vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eGeneral, m_summed_image));
+        std::vector<uint32_t> indices(swapchain_images.size());
+        std::ranges::iota(indices, 0);
+        std::ranges::for_each(
+            indices,
+            [this](auto i) {
+                executeSingleTimeCommand(
+                    [this, i](vk::CommandBuffer commandBuffer) {
+                        commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe,
+                            vk::PipelineStageFlagBits::eTransfer,
+                            vk::DependencyFlagBits::eByRegion,
+                            {}, {},
+                            getImagePipelineBarrier(
+                                vk::AccessFlagBits::eNoneKHR, vk::AccessFlagBits::eTransferWrite,
+                                vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal, m_summed_images[i].image));
+                        commandBuffer.clearColorImage(m_summed_images[i].image, vk::ImageLayout::eTransferDstOptimal,
+                            vk::ClearColorValue{},
+                            vk::ImageSubresourceRange{}
+                            .setAspectMask(vk::ImageAspectFlagBits::eColor)
+                            .setLayerCount(1)
+                            .setLevelCount(1));
+                        commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+                            vk::PipelineStageFlagBits::eRayTracingShaderKHR,
+                            vk::DependencyFlagBits::eByRegion,
+                            {}, {},
+                            getImagePipelineBarrier(
+                                vk::AccessFlagBits::eTransferWrite, vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite,
+                                vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eGeneral, m_summed_images[i].image));
+                    }
+                );
             }
         );
 
@@ -1188,8 +1203,6 @@ public:
         std::iota(m_next_image_semaphores_indices.begin(), m_next_image_semaphores_indices.end(), 0);
         m_next_image_free_semaphore_index = swapchain_images.size();
     }
-
-    ~Vulkan(){}
 
     static auto get_required_instance_extensions() {
         const std::vector<const char*> requiredInstanceExtensions = {
@@ -1259,7 +1272,7 @@ private:
         return m_render_image_semaphores[image_index];
     }
 
-    vk::Image m_summed_image;
+    std::vector<VulkanImage> m_summed_images;
 
     std::vector<VulkanBuffer> renderCallInfoBuffers;
 
