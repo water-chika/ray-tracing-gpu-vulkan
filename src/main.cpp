@@ -3,6 +3,7 @@
 #include <string>
 #include <thread>
 #include <charconv>
+#include <cstring>
 
 #include "ray_trace.h"
 

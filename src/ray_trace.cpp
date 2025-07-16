@@ -9,7 +9,7 @@
 #include <iostream>
 
 extern "C"
-__declspec(dllexport)
+#pragma comment(linker, "/export:ray_trace=ray_trace")
 void ray_trace(
     uint32_t samples,
     bool storeRenderResult,

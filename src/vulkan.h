@@ -1380,7 +1380,7 @@ private:
     std::vector<vk::CommandBuffer> commandBuffers;
 
     std::vector<vk::Fence> m_fences;
-    auto get_fence(uint32_t image_index) {
+    vk::Fence get_fence(uint32_t image_index) {
         return m_fences[image_index];
     }
 
@@ -1389,16 +1389,16 @@ private:
     std::vector<vk::Semaphore> m_next_image_semaphores;
     uint32_t m_next_image_free_semaphore_index;
     std::vector<uint32_t> m_next_image_semaphores_indices;
-    auto get_acquire_image_semaphore() {
+    vk::Semaphore get_acquire_image_semaphore() {
         return m_next_image_semaphores[m_next_image_free_semaphore_index];
     }
-    auto free_acquire_image_semaphore(uint32_t image_index) {
+    void free_acquire_image_semaphore(uint32_t image_index) {
         std::swap(m_next_image_free_semaphore_index, m_next_image_semaphores_indices[image_index]);
     }
 
     // Semaphore for swapchain present.
     std::vector<vk::Semaphore> m_render_image_semaphores;
-    auto get_render_image_semaphore(uint32_t image_index) {
+    vk::Semaphore get_render_image_semaphore(uint32_t image_index) {
         return m_render_image_semaphores[image_index];
     }
 

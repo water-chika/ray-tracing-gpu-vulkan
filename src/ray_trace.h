@@ -3,7 +3,6 @@
 #include <cstdint>
 
 extern "C"
-__declspec(dllexport)
 void ray_trace(
     uint32_t samples = 10,
     bool storeRenderResult = false,
