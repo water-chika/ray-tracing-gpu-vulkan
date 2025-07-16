@@ -627,7 +627,7 @@ namespace vulkan {
             vk::MemoryPropertyFlagBits::eHostVisible |
             vk::MemoryPropertyFlagBits::eHostCoherent |
             vk::MemoryPropertyFlagBits::eDeviceLocal, memory_properties);
-        return std::tuple{ sphereBuffer, bufferSize };
+        return sphereBuffer;
     }
 
     inline auto create_render_call_info_buffers(vk::Device device, uint32_t swapchain_image_count, const vk::PhysicalDeviceMemoryProperties& memory_properties) {
@@ -649,7 +649,7 @@ namespace vulkan {
         vk::DescriptorPool rtDescriptorPool,
         const auto& render_target_images,
         const auto& top_accelerations,
-        const VulkanBuffer& sphereBuffer,
+        const auto& sphereBuffers,
         const auto& summed_images,
         const auto& renderCallInfoBuffers) {
         std::vector<vk::DescriptorSetLayout> layouts(swapchain_image_count);
@@ -681,11 +681,18 @@ namespace vulkan {
             }
         );
 
-        vk::DescriptorBufferInfo sphereBufferInfo = {
-                .buffer = sphereBuffer.buffer,
-                .offset = 0,
-                .range = sizeof(Sphere) * MAX_SPHERE_AMOUNT
-        };
+        auto sphere_buffer_infos = std::vector<vk::DescriptorBufferInfo>(swapchain_image_count);
+        std::ranges::transform(
+            sphereBuffers,
+            sphere_buffer_infos.begin(),
+            [](auto& sphere_buffer) {
+                return  vk::DescriptorBufferInfo{
+                    .buffer = sphere_buffer.buffer,
+                    .offset = 0,
+                    .range = sizeof(Sphere) * MAX_SPHERE_AMOUNT
+                };
+            }
+        );
 
         auto summed_image_infos = std::vector<vk::DescriptorImageInfo>(swapchain_image_count);
         std::ranges::transform(
@@ -726,7 +733,7 @@ namespace vulkan {
                         .dstArrayElement = 0,
                         .descriptorCount = 1,
                         .descriptorType = vk::DescriptorType::eUniformBuffer,
-                        .pBufferInfo = &sphereBufferInfo
+                        .pBufferInfo = &sphere_buffer_infos[i]
                 });
             descriptorWrites.push_back(
                 {
@@ -1225,14 +1232,10 @@ namespace vulkan {
         device.freeCommandBuffers(command_pool, singleTimeCommandBuffer);
     }
 
-    inline auto build_accel_structures(vk::Device device,
-        vk::Queue queue, vk::CommandPool command_pool,
+    inline auto update_accel_structures_data(vk::Device device,
         auto& aabbs, VulkanBuffer& aabb_buffer,
-        auto& bottom_accel_build_infos,
-        auto& top_accel_build_infos,
         VulkanBuffer sphere_buffer, uint32_t sphere_buffer_size,
-        std::span<Sphere> spheres,
-        vk::detail::DispatchLoaderDynamic& dynamicDispatchLoader
+        std::span<Sphere> spheres
     ) {
         auto aabbs_buffer_size = sizeof(aabbs[0]) * aabbs.size();
         void* data = device.mapMemory(aabb_buffer.memory, 0, aabbs_buffer_size);
@@ -1260,7 +1263,6 @@ public:
         auto& summed_images,
         auto fences,
         auto next_image_semaphores, auto render_image_semaphores,
-        VulkanBuffer sphere_buffer, uint32_t sphere_buffer_size,
         auto& render_call_buffers,
         auto& command_buffers,
         vk::detail::DispatchLoaderDynamic& dynamicDispatchLoader,
@@ -1305,7 +1307,57 @@ public:
         return requiredDeviceExtensions;
     }
 
-    void render(const RenderCallInfo &renderCallInfo);
+    void render(const RenderCallInfo &renderCallInfo,
+        auto& aabbs, auto& aabb_buffers,
+        auto& sphere_buffers, std::span<Sphere> spheres) {
+        uint32_t swapChainImageIndex = 0;
+        auto acquire_image_semaphore = get_acquire_image_semaphore();
+        if (auto [result, index] = device.acquireNextImageKHR(swapChain, UINT64_MAX, acquire_image_semaphore);
+            result == vk::Result::eSuccess || result == vk::Result::eSuboptimalKHR) {
+            swapChainImageIndex = index;
+        }
+        else {
+            throw std::runtime_error{ "failed to acquire next image" };
+        }
+        free_acquire_image_semaphore(swapChainImageIndex);
+
+        auto fence = get_fence(swapChainImageIndex);
+        {
+            vk::Result res = device.waitForFences(fence, true, UINT64_MAX);
+            if (res != vk::Result::eSuccess) {
+                throw std::runtime_error{ "failed to wait fences" };
+            }
+        }
+        device.resetFences(fence);
+        updateRenderCallInfoBuffer(renderCallInfo, swapChainImageIndex);
+        vulkan::update_accel_structures_data(device,
+            aabbs, aabb_buffers[swapChainImageIndex],
+            sphere_buffers[swapChainImageIndex], spheres.size_bytes(), spheres);
+
+        auto render_image_semaphore = get_render_image_semaphore(swapChainImageIndex);
+
+        auto wait_semaphores = std::array{ acquire_image_semaphore };
+        auto  wait_stage_masks =
+            std::array<vk::PipelineStageFlags, 1>{ vk::PipelineStageFlagBits::eAllCommands };
+        auto signal_semaphores = std::array{ render_image_semaphore };
+        auto submitInfo = vk::SubmitInfo{}
+            .setCommandBuffers(commandBuffers[swapChainImageIndex])
+            .setWaitSemaphores(wait_semaphores)
+            .setWaitDstStageMask(wait_stage_masks)
+            .setSignalSemaphores(signal_semaphores);
+
+        computeQueue.submit(1, &submitInfo, fence);
+
+        vk::PresentInfoKHR presentInfo = {
+                .waitSemaphoreCount = 1,
+                .pWaitSemaphores = &render_image_semaphore,
+                .swapchainCount = 1,
+                .pSwapchains = &swapChain,
+                .pImageIndices = &swapChainImageIndex
+        };
+
+        presentQueue.presentKHR(presentInfo);
+    }
 
     void wait_render_complete();
 
@@ -1353,10 +1405,6 @@ private:
     std::vector<VulkanImage> m_summed_images;
 
     std::vector<VulkanBuffer> renderCallInfoBuffers;
-
-    [[nodiscard]] vk::ImageMemoryBarrier getImagePipelineBarrier(
-            const vk::AccessFlags srcAccessFlags, const vk::AccessFlags dstAccessFlags,
-            const vk::ImageLayout &oldLayout, const vk::ImageLayout &newLayout, const vk::Image &image) const;
 
     void updateRenderCallInfoBuffer(const RenderCallInfo &renderCallInfo, int index);
 };

@@ -115,7 +115,13 @@ void ray_trace(
 
     std::vector<vk::AabbPositionsKHR> aabbs(scene.sphereAmount);
 
-    auto aabb_buffer = vulkan::create_aabb_buffer(device, aabbs.size(), memory_properties);
+    auto aabb_buffers = std::vector<VulkanBuffer>(swapchain_image_count);
+    std::ranges::generate(
+        aabb_buffers,
+        [device, &aabbs, &memory_properties]() {
+            return vulkan::create_aabb_buffer(device, aabbs.size(), memory_properties);
+        }
+    );
 
     auto dynamicDispatchLoader = vk::detail::DispatchLoaderDynamic(instance, vkGetInstanceProcAddr, device);
 
@@ -129,8 +135,8 @@ void ray_trace(
     std::ranges::for_each(
         swapchain_image_indices,
         [&bottom_accels, &bottom_accel_build_infos, &aabbs_geometries,
-         device, &aabb_buffer, &aabbs, &memory_properties, &dynamicDispatchLoader](uint32_t i) {
-            auto [bottom_accel, bottom_accel_build_info] = vulkan::createBottomAccelerationStructure(device, aabb_buffer, aabbs.size(), aabbs_geometries[i], memory_properties, dynamicDispatchLoader);
+         device, &aabb_buffers, &aabbs, &memory_properties, &dynamicDispatchLoader](uint32_t i) {
+            auto [bottom_accel, bottom_accel_build_info] = vulkan::createBottomAccelerationStructure(device, aabb_buffers[i], aabbs.size(), aabbs_geometries[i], memory_properties, dynamicDispatchLoader);
             bottom_accels[i] = bottom_accel;
             bottom_accel_build_infos[i] = bottom_accel_build_info;
         }
@@ -155,11 +161,16 @@ void ray_trace(
     auto rt_descriptor_set_layout = vulkan::create_descriptor_set_layout(device);
     auto rt_descriptor_pool = vulkan::create_descriptor_pool(device, swapchain_images.size());
 
-    auto [sphere_buffer, sphere_buffer_size] = vulkan::create_sphere_buffer(device, memory_properties);
+    auto sphere_buffers = std::vector<VulkanBuffer>(swapchain_image_count);
+    std::ranges::generate(
+        sphere_buffers,
+        [device, &memory_properties]() { return vulkan::create_sphere_buffer(device, memory_properties); }
+    );
+
     auto render_call_info_buffers = vulkan::create_render_call_info_buffers(device, swapchain_images.size(), memory_properties);
 
     auto rt_descriptor_sets = vulkan::create_descriptor_set(device, swapchain_images.size(),
-        rt_descriptor_set_layout, rt_descriptor_pool, render_target_images, top_accels, sphere_buffer, summed_images, render_call_info_buffers);
+        rt_descriptor_set_layout, rt_descriptor_pool, render_target_images, top_accels, sphere_buffers, summed_images, render_call_info_buffers);
 
     auto rt_pipeline_layout = vulkan::create_pipeline_layout(device, rt_descriptor_set_layout);
 
@@ -192,7 +203,6 @@ void ray_trace(
         summed_images,
         fences,
         next_image_semaphores, render_image_semaphores,
-        sphere_buffer, sphere_buffer_size,
         render_call_info_buffers,
         command_buffers,
         dynamicDispatchLoader,
@@ -217,10 +227,6 @@ void ray_trace(
                 return getAABBFromSphere(sphere.geometry);
             }
         );
-        vulkan::build_accel_structures(device, compute_queue, command_pool,
-            aabbs, aabb_buffer, bottom_accel_build_infos, top_accel_build_infos,
-            sphere_buffer, sphere_buffer_size, std::span{ scene.spheres, scene.sphereAmount },
-            dynamicDispatchLoader);
 
         // RENDERING
         int requiredRenderCalls = samples / samplesPerRenderCall;
@@ -233,7 +239,8 @@ void ray_trace(
                 .samplesPerRenderCall = samplesPerRenderCall,
             };
 
-            vulkan.render(renderCallInfo);
+            vulkan.render(renderCallInfo, aabbs, aabb_buffers,
+                sphere_buffers, std::span{ scene.spheres, scene.sphereAmount });
 
             view_window.poll_events();
             if (view_window.should_close()) {
@@ -263,7 +270,7 @@ void ray_trace(
     device.destroyPipelineLayout(rt_pipeline_layout);
 
     std::ranges::for_each(render_call_info_buffers, [device](auto buffer) {vulkan::destroy_buffer(device, buffer); });
-    vulkan::destroy_buffer(device, sphere_buffer);
+    std::ranges::for_each(sphere_buffers, [device](auto& sphere_buffer) { vulkan::destroy_buffer(device, sphere_buffer); });
 
     device.destroyDescriptorPool(rt_descriptor_pool);
     device.destroyDescriptorSetLayout(rt_descriptor_set_layout);
@@ -271,7 +278,7 @@ void ray_trace(
     std::ranges::for_each(top_accels, [device, &dynamicDispatchLoader](auto top_accel) { vulkan::destroy_acceleration_structure(device, top_accel, dynamicDispatchLoader); });
     std::ranges::for_each(bottom_accels, [device, &dynamicDispatchLoader](auto bottom_accel) { vulkan::destroy_acceleration_structure(device, bottom_accel, dynamicDispatchLoader); });
 
-    vulkan::destroy_buffer(device, aabb_buffer);
+    std::ranges::for_each(aabb_buffers, [device](auto& aabb_buffer) { vulkan::destroy_buffer(device, aabb_buffer); });
 
     std::ranges::for_each(next_image_semaphores, [device](auto semaphore) {device.destroySemaphore(semaphore); });
     std::ranges::for_each(render_image_semaphores, [device](auto semaphore) {device.destroySemaphore(semaphore); });
