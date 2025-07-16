@@ -10,7 +10,6 @@ int main(int argc, const char** argv) {
     using namespace std::literals;
     // COMMAND LINE ARGUMENTS
     uint32_t samples = 10;
-    uint32_t samplesPerRenderCall = 1;
     bool storeRenderResult = false;
     uint32_t width = 1920;
     uint32_t height = 1080;
@@ -20,7 +19,6 @@ int main(int argc, const char** argv) {
             std::cout << "--help                            # Show this help infomation" << std::endl;
             std::cout << "--store                           # Store rendered image to file" << std::endl;
             std::cout << "--samples <count>                 # Total samples to render" << std::endl;
-            std::cout << "--samples_per_render_call <count> # Samples every render call will render" << std::endl;
             std::cout << "--width <width>                   # Image width" << std::endl;
             std::cout << "--height <height>                 # Image height" << std::endl;
             exit(0);
@@ -30,10 +28,6 @@ int main(int argc, const char** argv) {
         }
         else if (argv[i] == "--samples"s) {
             std::from_chars(argv[i + 1], argv[i + 1] + strlen(argv[i + 1]), samples);
-            ++i;
-        }
-        else if (argv[i] == "--samples_per_render_call"s) {
-            std::from_chars(argv[i + 1], argv[i + 1] + strlen(argv[i + 1]), samplesPerRenderCall);
             ++i;
         }
         else if (argv[i] == "--width"s) {
@@ -49,15 +43,9 @@ int main(int argc, const char** argv) {
         }
     }
 
-    if (samples % samplesPerRenderCall != 0) {
-        std::cerr << "'samples' (" << samples << ") has to be a multiple of "
-            << "'samples per render call' (" << samplesPerRenderCall << ")" << std::endl;
-        exit(1);
-    }
     try {
         ray_trace(
             samples,
-            samplesPerRenderCall,
             storeRenderResult,
             width,
             height);

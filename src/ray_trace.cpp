@@ -12,7 +12,6 @@ extern "C"
 __declspec(dllexport)
 void ray_trace(
     uint32_t samples,
-    uint32_t samplesPerRenderCall,
     bool storeRenderResult,
     uint32_t width,
     uint32_t height
@@ -229,23 +228,17 @@ void ray_trace(
         );
 
         // RENDERING
-        int requiredRenderCalls = samples / samplesPerRenderCall;
+        RenderCallInfo renderCallInfo = {
+            .number = 0,
+            .samplesPerRenderCall = samples,
+        };
 
-        uint32_t number = 0;
-        while (number < requiredRenderCalls) {
-            ++number;
-            RenderCallInfo renderCallInfo = {
-                .number = number,
-                .samplesPerRenderCall = samplesPerRenderCall,
-            };
+        vulkan.render(renderCallInfo, aabbs, aabb_buffers,
+            sphere_buffers, std::span{ scene.spheres, scene.sphereAmount });
 
-            vulkan.render(renderCallInfo, aabbs, aabb_buffers,
-                sphere_buffers, std::span{ scene.spheres, scene.sphereAmount });
-
-            view_window.poll_events();
-            if (view_window.should_close()) {
-                break;
-            }
+        view_window.poll_events();
+        if (view_window.should_close()) {
+            break;
         }
 
         if (storeRenderResult) {
@@ -253,7 +246,6 @@ void ray_trace(
             vulkan.write_to_file("render_result.hdr");
             std::cout << "Write completes." << std::endl;
         }
-
     }
 
     // WINDOW

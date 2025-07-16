@@ -52,7 +52,7 @@ void main() {
 
     imageStore(summedPixelColorImage, ivec2(gl_LaunchIDEXT.xy), vec4(summedPixelColor, 1.0f));
 
-    const vec3 pixelColor = sqrt(summedPixelColor / float(renderCallInfo.number * renderCallInfo.samplesPerRenderCall));
+    const vec3 pixelColor = sqrt(summedPixelColor / float(renderCallInfo.samplesPerRenderCall));
     imageStore(renderTarget, ivec2(gl_LaunchIDEXT.xy), vec4(pixelColor, 1.0f));
 }
 
