@@ -458,7 +458,7 @@ namespace vulkan {
 
     inline auto createTopAccelerationStructure(vk::Device device,
         vk::AccelerationStructureKHR bottom_accel,
-        vk::AccelerationStructureGeometryKHR geometry,
+        vk::AccelerationStructureGeometryKHR& geometry,
         const vk::PhysicalDeviceMemoryProperties& memory_properties,
         vk::detail::DispatchLoaderDynamic& dynamicDispatchLoader) {
 
@@ -648,7 +648,7 @@ namespace vulkan {
         vk::DescriptorSetLayout rtDescriptorSetLayout,
         vk::DescriptorPool rtDescriptorPool,
         const auto& render_target_images,
-        vk::AccelerationStructureKHR top_acceleration,
+        const auto& top_accelerations,
         const VulkanBuffer& sphereBuffer,
         const auto& summed_images,
         const auto& renderCallInfoBuffers) {
@@ -669,10 +669,17 @@ namespace vulkan {
             }
         );
 
-        vk::WriteDescriptorSetAccelerationStructureKHR accelerationStructureInfo = {
-                .accelerationStructureCount = 1,
-                .pAccelerationStructures = &top_acceleration
-        };
+        auto acceleration_structure_infos = std::vector<vk::WriteDescriptorSetAccelerationStructureKHR>(swapchain_image_count);
+        std::ranges::transform(
+            top_accelerations,
+            acceleration_structure_infos.begin(),
+            [](auto& accel) {
+                return vk::WriteDescriptorSetAccelerationStructureKHR{
+                    .accelerationStructureCount = 1,
+                    .pAccelerationStructures = &accel.accelerationStructure
+                };
+            }
+        );
 
         vk::DescriptorBufferInfo sphereBufferInfo = {
                 .buffer = sphereBuffer.buffer,
@@ -705,7 +712,7 @@ namespace vulkan {
                 });
             descriptorWrites.push_back(
                 {
-                        .pNext = &accelerationStructureInfo,
+                        .pNext = &acceleration_structure_infos[i],
                         .dstSet = set,
                         .dstBinding = 1,
                         .dstArrayElement = 0,
@@ -980,6 +987,8 @@ namespace vulkan {
     inline auto create_command_buffers(vk::Device device, vk::CommandPool commandPool, uint32_t swapchain_images_count, const auto& swapchain_images,
         uint32_t queue_family, auto& render_target_images, auto& summed_images,
         vk::Pipeline pipeline, const auto& descriptor_sets, vk::PipelineLayout pipeline_layout,
+        auto& aabbs, auto& bottom_accel_build_infos, auto& bottom_accels,
+        auto& top_accel_build_infos, auto& top_accels,
         vk::StridedDeviceAddressRegionKHR sbtRayGenAddressRegion, vk::StridedDeviceAddressRegionKHR sbtMissAddressRegion, vk::StridedDeviceAddressRegionKHR sbtHitAddressRegion,
         uint32_t width, uint32_t height, vk::detail::DispatchLoaderDynamic& dynamicDispatchLoader) {
         auto commandBuffers = std::vector<vk::CommandBuffer>(swapchain_images_count);
@@ -995,6 +1004,48 @@ namespace vulkan {
 
             vk::CommandBufferBeginInfo beginInfo = {};
             commandBuffer.begin(&beginInfo);
+
+
+            // BUILD THE ACCELERATION STRUCTURE
+            vk::AccelerationStructureBuildRangeInfoKHR buildRangeInfo = {
+                    .primitiveCount = static_cast<uint32_t>(aabbs.size()),
+                    .primitiveOffset = 0,
+                    .firstVertex = 0,
+                    .transformOffset = 0
+            };
+
+            const vk::AccelerationStructureBuildRangeInfoKHR* pBuildRangeInfos[] = { &buildRangeInfo };
+            commandBuffer.buildAccelerationStructuresKHR(1, &bottom_accel_build_infos[swapChainImageIndex], pBuildRangeInfos, dynamicDispatchLoader);
+            commandBuffer.pipelineBarrier2(
+                vk::DependencyInfo{}
+                .setBufferMemoryBarriers(
+                    vk::BufferMemoryBarrier2{}.setBuffer(bottom_accels[swapChainImageIndex].structureBuffer.buffer).setSrcAccessMask(vk::AccessFlagBits2::eMemoryWrite).setDstAccessMask(vk::AccessFlagBits2::eMemoryWrite)
+                    .setSrcQueueFamilyIndex(queue_family).setDstQueueFamilyIndex(queue_family)
+                    .setSrcStageMask(vk::PipelineStageFlagBits2::eAllCommands).setDstStageMask(vk::PipelineStageFlagBits2::eAllCommands)
+                    .setSize(vk::WholeSize)
+                )
+                );
+
+            // BUILD THE ACCELERATION STRUCTURE
+            vk::AccelerationStructureBuildRangeInfoKHR top_buildRangeInfo = {
+                    .primitiveCount = 1,
+                    .primitiveOffset = 0,
+                    .firstVertex = 0,
+                    .transformOffset = 0
+            };
+
+            const vk::AccelerationStructureBuildRangeInfoKHR* p_top_BuildRangeInfos[] = { &top_buildRangeInfo };
+            commandBuffer.buildAccelerationStructuresKHR(1, &top_accel_build_infos[swapChainImageIndex], p_top_BuildRangeInfos, dynamicDispatchLoader);
+
+            commandBuffer.pipelineBarrier2(
+                vk::DependencyInfo{}
+                .setBufferMemoryBarriers(
+                    vk::BufferMemoryBarrier2{}.setBuffer(top_accels[swapChainImageIndex].structureBuffer.buffer).setSrcAccessMask(vk::AccessFlagBits2::eMemoryWrite).setDstAccessMask(vk::AccessFlagBits2::eMemoryWrite)
+                    .setSrcQueueFamilyIndex(queue_family).setDstQueueFamilyIndex(queue_family)
+                    .setSrcStageMask(vk::PipelineStageFlagBits2::eAllCommands).setDstStageMask(vk::PipelineStageFlagBits2::eAllCommands)
+                    .setSize(vk::WholeSize)
+                )
+            );
 
             commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTopOfPipe,
                 vk::PipelineStageFlagBits::eTransfer,
@@ -1177,8 +1228,8 @@ namespace vulkan {
     inline auto build_accel_structures(vk::Device device,
         vk::Queue queue, vk::CommandPool command_pool,
         auto& aabbs, VulkanBuffer& aabb_buffer,
-        vk::AccelerationStructureBuildGeometryInfoKHR& bottom_accel_build_info,
-        vk::AccelerationStructureBuildGeometryInfoKHR& top_accel_build_info,
+        auto& bottom_accel_build_infos,
+        auto& top_accel_build_infos,
         VulkanBuffer sphere_buffer, uint32_t sphere_buffer_size,
         std::span<Sphere> spheres,
         vk::detail::DispatchLoaderDynamic& dynamicDispatchLoader
@@ -1187,34 +1238,6 @@ namespace vulkan {
         void* data = device.mapMemory(aabb_buffer.memory, 0, aabbs_buffer_size);
         memcpy(data, aabbs.data(), aabbs_buffer_size);
         device.unmapMemory(aabb_buffer.memory);
-
-
-        // BUILD THE ACCELERATION STRUCTURE
-        vk::AccelerationStructureBuildRangeInfoKHR buildRangeInfo = {
-                .primitiveCount = static_cast<uint32_t>(aabbs.size()),
-                .primitiveOffset = 0,
-                .firstVertex = 0,
-                .transformOffset = 0
-        };
-
-        const vk::AccelerationStructureBuildRangeInfoKHR* pBuildRangeInfos[] = { &buildRangeInfo };
-
-        execute_single_time_command(device, queue, command_pool, [&](const vk::CommandBuffer& singleTimeCommandBuffer) {
-            singleTimeCommandBuffer.buildAccelerationStructuresKHR(1, &bottom_accel_build_info, pBuildRangeInfos, dynamicDispatchLoader);
-            });
-
-        // BUILD THE ACCELERATION STRUCTURE
-        vk::AccelerationStructureBuildRangeInfoKHR top_buildRangeInfo = {
-                .primitiveCount = 1,
-                .primitiveOffset = 0,
-                .firstVertex = 0,
-                .transformOffset = 0
-        };
-
-        const vk::AccelerationStructureBuildRangeInfoKHR* p_top_BuildRangeInfos[] = { &top_buildRangeInfo };
-        execute_single_time_command(device, queue, command_pool, [&](const vk::CommandBuffer& singleTimeCommandBuffer) {
-            singleTimeCommandBuffer.buildAccelerationStructuresKHR(1, &top_accel_build_info, p_top_BuildRangeInfos, dynamicDispatchLoader);
-            });
 
         {
             void* data = device.mapMemory(sphere_buffer.memory, 0, sphere_buffer_size);
@@ -1237,9 +1260,6 @@ public:
         auto& summed_images,
         auto fences,
         auto next_image_semaphores, auto render_image_semaphores,
-        auto& aabbs, VulkanBuffer& aabb_buffer,
-        vk::AccelerationStructureBuildGeometryInfoKHR bottom_accel_build_info,
-        vk::AccelerationStructureBuildGeometryInfoKHR top_accel_build_info,
         VulkanBuffer sphere_buffer, uint32_t sphere_buffer_size,
         auto& render_call_buffers,
         auto& command_buffers,

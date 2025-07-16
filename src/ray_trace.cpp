@@ -57,9 +57,9 @@ void ray_trace(
     const vk::Format format = vk::Format::eR8G8B8A8Unorm;
     const vk::ColorSpaceKHR color_space = vk::ColorSpaceKHR::eSrgbNonlinear;
     vk::PresentModeKHR present_mode = vk::PresentModeKHR::eImmediate;
-    auto image_count = std::max(surface_capabilities.minImageCount, 4u);
+    auto image_count = surface_capabilities.minImageCount;
     auto swapchain = vulkan::create_swapchain(physical_device, surface, device,
-        surface_capabilities.minImageCount, format, color_space, present_mode, swapchain_extent, surface_capabilities.currentTransform);
+        image_count, format, color_space, present_mode, swapchain_extent, surface_capabilities.currentTransform);
 
     auto swapchain_images = device.getSwapchainImagesKHR(swapchain);
     auto swapchain_image_count = swapchain_images.size();
@@ -119,18 +119,38 @@ void ray_trace(
 
     auto dynamicDispatchLoader = vk::detail::DispatchLoaderDynamic(instance, vkGetInstanceProcAddr, device);
 
+    auto aabbs_geometries = std::vector<vk::AccelerationStructureGeometryKHR>(swapchain_image_count);
+    std::ranges::fill(aabbs_geometries, vk::AccelerationStructureGeometryKHR{.geometryType = vk::GeometryTypeKHR::eAabbs, .flags = vk::GeometryFlagBitsKHR::eOpaque});
+
+    auto bottom_accels = std::vector<VulkanAccelerationStructure>(swapchain_image_count);
+    auto bottom_accel_build_infos = std::vector<vk::AccelerationStructureBuildGeometryInfoKHR>(swapchain_image_count);
+    auto swapchain_image_indices = std::vector<uint32_t>(swapchain_image_count);
+    std::ranges::iota(swapchain_image_indices, 0);
+    std::ranges::for_each(
+        swapchain_image_indices,
+        [&bottom_accels, &bottom_accel_build_infos, &aabbs_geometries,
+         device, &aabb_buffer, &aabbs, &memory_properties, &dynamicDispatchLoader](uint32_t i) {
+            auto [bottom_accel, bottom_accel_build_info] = vulkan::createBottomAccelerationStructure(device, aabb_buffer, aabbs.size(), aabbs_geometries[i], memory_properties, dynamicDispatchLoader);
+            bottom_accels[i] = bottom_accel;
+            bottom_accel_build_infos[i] = bottom_accel_build_info;
+        }
+    );
+    
     // ACCELERATION STRUCTURE META INFO
-    vk::AccelerationStructureGeometryKHR aabbs_geometry = {
-            .geometryType = vk::GeometryTypeKHR::eAabbs,
-            .flags = vk::GeometryFlagBitsKHR::eOpaque
-    };
-    auto [bottom_accel, bottom_accel_build_info] = vulkan::createBottomAccelerationStructure(device, aabb_buffer, aabbs.size(), aabbs_geometry, memory_properties, dynamicDispatchLoader);
-    // ACCELERATION STRUCTURE META INFO
-    vk::AccelerationStructureGeometryKHR instances_geometry = {
-            .geometryType = vk::GeometryTypeKHR::eInstances,
-            .flags = vk::GeometryFlagBitsKHR::eOpaque
-    };
-    auto [top_accel, top_accel_build_info] = vulkan::createTopAccelerationStructure(device, bottom_accel.accelerationStructure, instances_geometry, memory_properties, dynamicDispatchLoader);
+    auto instances_geometries = std::vector<vk::AccelerationStructureGeometryKHR>(swapchain_image_count);
+    std::ranges::fill(instances_geometries, vk::AccelerationStructureGeometryKHR{ .geometryType = vk::GeometryTypeKHR::eInstances, .flags = vk::GeometryFlagBitsKHR::eOpaque});
+
+    auto top_accels = std::vector<VulkanAccelerationStructure>(swapchain_image_count);
+    auto top_accel_build_infos = std::vector<vk::AccelerationStructureBuildGeometryInfoKHR>(swapchain_image_count);
+    std::ranges::for_each(
+        swapchain_image_indices,
+        [&top_accels, &top_accel_build_infos, &instances_geometries,
+        device, &bottom_accels, &memory_properties, &dynamicDispatchLoader](uint32_t i) {
+            auto [top_accel, top_accel_build_info] = vulkan::createTopAccelerationStructure(device, bottom_accels[i].accelerationStructure, instances_geometries[i], memory_properties, dynamicDispatchLoader);
+            top_accels[i] = top_accel;
+            top_accel_build_infos[i] = top_accel_build_info;
+        }
+    );
 
     auto rt_descriptor_set_layout = vulkan::create_descriptor_set_layout(device);
     auto rt_descriptor_pool = vulkan::create_descriptor_pool(device, swapchain_images.size());
@@ -139,7 +159,7 @@ void ray_trace(
     auto render_call_info_buffers = vulkan::create_render_call_info_buffers(device, swapchain_images.size(), memory_properties);
 
     auto rt_descriptor_sets = vulkan::create_descriptor_set(device, swapchain_images.size(),
-        rt_descriptor_set_layout, rt_descriptor_pool, render_target_images, top_accel.accelerationStructure, sphere_buffer, summed_images, render_call_info_buffers);
+        rt_descriptor_set_layout, rt_descriptor_pool, render_target_images, top_accels, sphere_buffer, summed_images, render_call_info_buffers);
 
     auto rt_pipeline_layout = vulkan::create_pipeline_layout(device, rt_descriptor_set_layout);
 
@@ -158,6 +178,8 @@ void ray_trace(
     auto command_buffers = vulkan::create_command_buffers(
         device, command_pool, swapchain_images.size(), swapchain_images, compute_queue_family,
         render_target_images, summed_images, rt_pipeline, rt_descriptor_sets, rt_pipeline_layout,
+        aabbs, bottom_accel_build_infos, bottom_accels,
+        top_accel_build_infos, top_accels,
         sbtRayGenAddressRegion, sbtMissAddressRegion, sbtHitAddressRegion,
         width, height, dynamicDispatchLoader);
 
@@ -170,9 +192,6 @@ void ray_trace(
         summed_images,
         fences,
         next_image_semaphores, render_image_semaphores,
-        aabbs, aabb_buffer,
-        bottom_accel_build_info,
-        top_accel_build_info,
         sphere_buffer, sphere_buffer_size,
         render_call_info_buffers,
         command_buffers,
@@ -199,7 +218,7 @@ void ray_trace(
             }
         );
         vulkan::build_accel_structures(device, compute_queue, command_pool,
-            aabbs, aabb_buffer, bottom_accel_build_info, top_accel_build_info,
+            aabbs, aabb_buffer, bottom_accel_build_infos, top_accel_build_infos,
             sphere_buffer, sphere_buffer_size, std::span{ scene.spheres, scene.sphereAmount },
             dynamicDispatchLoader);
 
@@ -249,8 +268,8 @@ void ray_trace(
     device.destroyDescriptorPool(rt_descriptor_pool);
     device.destroyDescriptorSetLayout(rt_descriptor_set_layout);
 
-    vulkan::destroy_acceleration_structure(device, top_accel, dynamicDispatchLoader);
-    vulkan::destroy_acceleration_structure(device, bottom_accel, dynamicDispatchLoader);
+    std::ranges::for_each(top_accels, [device, &dynamicDispatchLoader](auto top_accel) { vulkan::destroy_acceleration_structure(device, top_accel, dynamicDispatchLoader); });
+    std::ranges::for_each(bottom_accels, [device, &dynamicDispatchLoader](auto bottom_accel) { vulkan::destroy_acceleration_structure(device, bottom_accel, dynamicDispatchLoader); });
 
     vulkan::destroy_buffer(device, aabb_buffer);
 
