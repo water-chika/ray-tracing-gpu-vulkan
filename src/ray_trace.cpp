@@ -112,7 +112,7 @@ void __stdcall ray_trace(
     auto next_image_semaphores = vulkan::create_semaphores(device, swapchain_images.size() + 1);
     auto render_image_semaphores = vulkan::create_semaphores(device, swapchain_images.size());
 
-    auto scene = generateRandomScene();
+    auto scene = generateRandomScene(view_window.get_cursor_position());
 
     std::vector<vk::AabbPositionsKHR> aabbs(scene.sphereAmount);
 
@@ -210,7 +210,8 @@ void __stdcall ray_trace(
         settings, scene
     );
     while (!view_window.should_close()) {
-        scene = generateRandomScene();
+        auto cursor_pos = view_window.get_cursor_position();
+        scene = generateRandomScene(cursor_pos);
         std::ranges::transform(
             std::span{ scene.spheres, scene.sphereAmount },
             aabbs.begin(),

@@ -22,6 +22,21 @@ public:
 	void poll_events() {
 		glfwPollEvents();
 	}
+private:
+	static void cursor_position_callback(GLFWwindow* window, double xpos, double ypos) {
+
+	}
+public:
+
+	void set_cursor_event() {
+		glfwSetCursorPosCallback(m_window, cursor_position_callback);
+	}
+
+	auto get_cursor_position() {
+		double xpos, ypos;
+		glfwGetCursorPos(m_window, &xpos, &ypos);
+		return std::tuple{ xpos, ypos };
+	}
 
 	bool should_close() {
 		return glfwWindowShouldClose(m_window);
