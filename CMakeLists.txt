@@ -27,6 +27,7 @@ add_library(
         src/window.hpp
         src/vulkan_settings.h
         src/vulkan.h
+        src/vulkan.hpp
         src/vulkan.cpp
         src/scene.h
         src/scene.cpp

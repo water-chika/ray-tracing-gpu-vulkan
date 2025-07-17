@@ -1,11 +1,5 @@
 #pragma once
 
-#define VULKAN_HPP_NO_CONSTRUCTORS
-#define VULKAN_HPP_NO_STRUCT_CONSTRUCTORS
-#define VKFW_NO_STRUCT_CONSTRUCTORS
-
-#include <vulkan/vulkan.hpp>
-
 #include <functional>
 #include "vulkan_settings.h"
 #include "scene.h"
@@ -20,6 +14,8 @@
 #include <fstream>
 
 #include "shader_path.hpp"
+
+#include "vulkan.hpp"
 
 struct VulkanImage {
     vk::Image image;
