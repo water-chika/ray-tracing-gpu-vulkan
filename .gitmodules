@@ -10,3 +10,9 @@
 [submodule "lib/glfw"]
 	path = lib/glfw
 	url = https://github.com/glfw/glfw
+[submodule "lib/Vulkan-Loader"]
+	path = lib/Vulkan-Loader
+	url = https://github.com/KhronosGroup/Vulkan-Loader
+[submodule "lib/glslang"]
+	path = lib/glslang
+	url = https://github.com/KhronosGroup/glslang

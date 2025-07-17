@@ -43,7 +43,7 @@ public:
 			throw std::runtime_error{ "failed to create surface" };
 		}
 
-		return surface;
+		return vk::SurfaceKHR{ surface };
 	}
 private:
 	GLFWwindow* m_window;

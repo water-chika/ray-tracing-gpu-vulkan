@@ -3,7 +3,16 @@ project(RayTracingGPUVulkan)
 
 set(CMAKE_CXX_STANDARD 23)
 
-find_package(Vulkan REQUIRED)
+if (USE_VULKAN_SDK)
+    find_package(Vulkan REQUIRED)
+    add_library(vulkan ALIAS Vulkan::Vulkan)
+    add_executable(glslang-standalone ALIAS Vulkan::glslangValidator)
+else()
+    add_subdirectory(lib/Vulkan-Headers)
+    add_subdirectory(lib/Vulkan-Loader)
+    set(ENABLE_OPT OFF)
+    add_subdirectory(lib/glslang)
+endif()
 
 if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/lib/glfw/CMakeLists.txt)
     add_subdirectory(lib/glfw)
@@ -27,7 +36,8 @@ add_library(
 
 target_link_libraries(ray_trace
     glfw
-    Vulkan::Vulkan
+    Vulkan::Headers
+    vulkan
 )
 
 
@@ -65,10 +75,10 @@ endif()
 function(compile_glsl stage glsl_file spv_file)
 add_custom_command(COMMENT "Compiling ${stage} shader"
                     OUTPUT ${spv_file}
-                    COMMAND Vulkan::glslangValidator -V --target-env vulkan1.3 -S ${stage} -o ${spv_file}
+                    COMMAND glslang-standalone -V --target-env vulkan1.3 -S ${stage} -o ${spv_file}
                             ${glsl_file}
                     MAIN_DEPENDENCY ${glsl_file}
-                    DEPENDS ${glsl_file} Vulkan::glslangValidator)
+                    DEPENDS ${glsl_file} glslang-standalone)
 endfunction()
 function(compile_glsl_help stage)
     compile_glsl(${stage}

@@ -9,8 +9,10 @@
 #include <iostream>
 
 extern "C"
-#pragma comment(linker, "/export:ray_trace=ray_trace")
-void ray_trace(
+#if WIN32
+__declspec(dllexport)
+#endif
+void __stdcall ray_trace(
     uint32_t samples,
     bool storeRenderResult,
     uint32_t width,
