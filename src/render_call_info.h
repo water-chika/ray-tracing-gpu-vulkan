@@ -5,4 +5,6 @@
 struct RenderCallInfo {
     uint32_t number;
     uint32_t samplesPerRenderCall;
+    glm::u32vec2 offset;
+    glm::u32vec2 image_size;
 };

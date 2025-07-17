@@ -1261,37 +1261,6 @@ namespace vulkan {
 
 class Vulkan {
 public:
-    Vulkan(
-        const vk::PhysicalDeviceMemoryProperties& memory_properties,
-        vk::Device device, vk::Queue compute_queue, vk::Queue present_queue,
-        std::pair<uint32_t, uint32_t> compute_present_queue_families,
-        vk::CommandPool command_pool,
-        vk::SwapchainKHR swapchain, auto swapchain_images,
-        vk::Extent2D swapchain_extent,
-        auto& summed_images,
-        auto fences,
-        auto next_image_semaphores, auto render_image_semaphores,
-        auto& render_call_buffers,
-        auto& command_buffers,
-        vk::detail::DispatchLoaderDynamic& dynamicDispatchLoader,
-        VulkanSettings settings, Scene scene) :
-        m_memory_properties{memory_properties},
-        device{ device }, computeQueue{compute_queue}, presentQueue{present_queue},
-        computeQueueFamily{ compute_present_queue_families.first }, presentQueueFamily{ compute_present_queue_families.second },
-        commandPool{command_pool},
-        swapChain{ swapchain }, swapChainExtent{ swapchain_extent },
-        m_summed_images{summed_images},
-        m_fences{fences},
-        m_next_image_semaphores{ next_image_semaphores }, m_render_image_semaphores{ render_image_semaphores },
-        renderCallInfoBuffers{ render_call_buffers },
-        commandBuffers{command_buffers},
-        settings(settings)
-    {
-        m_next_image_semaphores_indices.resize(swapchain_images.size());
-        std::iota(m_next_image_semaphores_indices.begin(), m_next_image_semaphores_indices.end(), 0);
-        m_next_image_free_semaphore_index = swapchain_images.size();
-    }
-
     static auto get_required_instance_extensions() {
         const std::vector<const char*> requiredInstanceExtensions = {
             VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
@@ -1315,78 +1284,8 @@ public:
         return requiredDeviceExtensions;
     }
 
-    void render(const RenderCallInfo &renderCallInfo,
-        auto& aabbs, auto& aabb_buffers,
-        auto& sphere_buffers, std::span<Sphere> spheres) {
-        uint32_t swapChainImageIndex = 0;
-        auto acquire_image_semaphore = get_acquire_image_semaphore();
-        if (auto [result, index] = device.acquireNextImageKHR(swapChain, UINT64_MAX, acquire_image_semaphore);
-            result == vk::Result::eSuccess || result == vk::Result::eSuboptimalKHR) {
-            swapChainImageIndex = index;
-        }
-        else {
-            throw std::runtime_error{ "failed to acquire next image" };
-        }
-        free_acquire_image_semaphore(swapChainImageIndex);
-
-        auto fence = get_fence(swapChainImageIndex);
-        {
-            vk::Result res = device.waitForFences(fence, true, UINT64_MAX);
-            if (res != vk::Result::eSuccess) {
-                throw std::runtime_error{ "failed to wait fences" };
-            }
-        }
-        device.resetFences(fence);
-        updateRenderCallInfoBuffer(renderCallInfo, swapChainImageIndex);
-        vulkan::update_accel_structures_data(device,
-            aabbs, aabb_buffers[swapChainImageIndex],
-            sphere_buffers[swapChainImageIndex], spheres.size_bytes(), spheres);
-
-        auto render_image_semaphore = get_render_image_semaphore(swapChainImageIndex);
-
-        auto wait_semaphores = std::array{ acquire_image_semaphore };
-        auto  wait_stage_masks =
-            std::array<vk::PipelineStageFlags, 1>{ vk::PipelineStageFlagBits::eAllCommands };
-        auto signal_semaphores = std::array{ render_image_semaphore };
-        auto submitInfo = vk::SubmitInfo{}
-            .setCommandBuffers(commandBuffers[swapChainImageIndex])
-            .setWaitSemaphores(wait_semaphores)
-            .setWaitDstStageMask(wait_stage_masks)
-            .setSignalSemaphores(signal_semaphores);
-
-        computeQueue.submit(1, &submitInfo, fence);
-
-        vk::PresentInfoKHR presentInfo = {
-                .waitSemaphoreCount = 1,
-                .pWaitSemaphores = &render_image_semaphore,
-                .swapchainCount = 1,
-                .pSwapchains = &swapChain,
-                .pImageIndices = &swapChainImageIndex
-        };
-
-        presentQueue.presentKHR(presentInfo);
-    }
-
-    void wait_render_complete();
-
-    void write_to_file(std::filesystem::path path);
-
 private:
-    VulkanSettings settings;
-
-    vk::PhysicalDeviceMemoryProperties m_memory_properties;
-    vk::Device device;
-
-    uint32_t presentQueueFamily, computeQueueFamily;
-    vk::Queue presentQueue, computeQueue;
-
-    vk::CommandPool commandPool;
-
-    vk::SwapchainKHR swapChain;
-    vk::Extent2D swapChainExtent;
-
-    std::vector<vk::CommandBuffer> commandBuffers;
-
+    
     std::vector<vk::Fence> m_fences;
     vk::Fence get_fence(uint32_t image_index) {
         return m_fences[image_index];
@@ -1409,10 +1308,4 @@ private:
     vk::Semaphore get_render_image_semaphore(uint32_t image_index) {
         return m_render_image_semaphores[image_index];
     }
-
-    std::vector<VulkanImage> m_summed_images;
-
-    std::vector<VulkanBuffer> renderCallInfoBuffers;
-
-    void updateRenderCallInfoBuffer(const RenderCallInfo &renderCallInfo, int index);
 };
