@@ -12,6 +12,7 @@
 #include <ranges>
 #include <numeric>
 #include <fstream>
+#include <unordered_map>
 
 #include "shader_path.hpp"
 
@@ -64,7 +65,7 @@ namespace vulkan {
         return vk::createInstance(instanceCreateInfo);
     }
 
-    vk::PhysicalDevice pick_physical_device(vk::Instance instance, const auto& extensions) {
+    auto pick_physical_devices(vk::Instance instance, const auto& extensions) {
         std::vector<vk::PhysicalDevice> allPhysicalDevices = instance.enumeratePhysicalDevices();
 
         if (allPhysicalDevices.empty()) {
@@ -85,17 +86,27 @@ namespace vulkan {
             }
         }
 
-        for (const vk::PhysicalDevice& d : withRequiredExtensionsPhysicalDevices) {
-            if (d.getProperties().deviceType == vk::PhysicalDeviceType::eDiscreteGpu) {
-                return d;
+        std::unordered_map<uint32_t, vk::PhysicalDevice> id_device_map{};
+
+        std::ranges::for_each(
+            withRequiredExtensionsPhysicalDevices,
+            [&id_device_map](vk::PhysicalDevice physical_device) {
+                auto properties = physical_device.getProperties();
+                id_device_map[properties.deviceID] = physical_device;
             }
-        }
+        );
 
-        if (withRequiredExtensionsPhysicalDevices.size() > 0) {
-            return withRequiredExtensionsPhysicalDevices[0];
-        }
+        auto unique_physical_devices = std::vector<vk::PhysicalDevice>(id_device_map.size());
 
-        throw std::runtime_error("No GPU supporting all required features found!");
+        std::ranges::transform(
+            id_device_map,
+            unique_physical_devices.begin(),
+            [](auto k_v) {
+                return k_v.second;
+            }
+        );
+
+        return unique_physical_devices;
     }
 
     inline auto find_queue_family(vk::PhysicalDevice physicalDevice, vk::SurfaceKHR surface) {
@@ -1244,6 +1255,7 @@ namespace vulkan {
             device.unmapMemory(sphere_buffer.memory);
         }
     }
+
 }
 
 

@@ -41,13 +41,56 @@ void __stdcall ray_trace(
 
     auto surface = view_window.create_surface(instance);
 
-    auto physical_device = vulkan::pick_physical_device(instance, Vulkan::get_required_device_extensions());
+    auto physical_devices = vulkan::pick_physical_devices(instance, Vulkan::get_required_device_extensions());
 
-    auto [compute_queue_family, present_queue_family] = vulkan::find_queue_family(physical_device, surface);
+    if (physical_devices.size() == 0) {
+        throw std::runtime_error{ "No GPUs with required extensions" };
+    }
+    auto physical_device_indices = std::vector<uint32_t>(physical_devices.size());
+    std::ranges::iota(physical_device_indices, 0);
 
-    auto [device, compute_queue, present_queue] = vulkan::create_device(instance, physical_device, compute_queue_family, present_queue_family, Vulkan::get_required_device_extensions());
+    auto physical_device = physical_devices[0];
 
-    auto command_pool = device.createCommandPool({ .queueFamilyIndex = compute_queue_family });
+    auto compute_queue_families = std::vector<uint32_t>(physical_devices.size());
+    auto present_queue_families = std::vector<uint32_t>(physical_devices.size());
+    std::ranges::for_each(
+        physical_device_indices,
+        [&compute_queue_families, &present_queue_families, &physical_devices, surface](auto i) {
+            auto [compute_queue_family, present_queue_family] = vulkan::find_queue_family(physical_devices[i], surface);
+        }
+    );
+    
+    auto compute_queue_family = compute_queue_families[0];
+    auto present_queue_family = present_queue_families[0];
+
+    auto devices = std::vector<vk::Device>(physical_devices.size());
+    auto compute_queues = std::vector<vk::Queue>(physical_devices.size());
+    auto present_queues = std::vector<vk::Queue>(physical_devices.size());
+
+    std::ranges::for_each(
+        physical_device_indices,
+        [&devices, &compute_queues, &present_queues, instance, &physical_devices, &compute_queue_families, &present_queue_families](auto i) {
+            auto [device, compute_queue, present_queue] = vulkan::create_device(instance, physical_devices[i], compute_queue_families[i], present_queue_families[i],
+                Vulkan::get_required_device_extensions());
+            devices[i] = device;
+            compute_queues[i] = compute_queue;
+            present_queues[i] = present_queue;
+        }
+    );
+    
+    auto device = devices[0];
+    auto compute_queue = compute_queues[0];
+    auto present_queue = present_queues[0];
+
+    auto command_pools = std::vector<vk::CommandPool>(physical_devices.size());
+    std::ranges::for_each(
+        physical_device_indices,
+        [&command_pools, &devices, &compute_queue_families](auto i) {
+            auto command_pool = devices[i].createCommandPool({.queueFamilyIndex = compute_queue_families[i]});
+            command_pools[i] = command_pool;
+        }
+    );
+    auto command_pool = command_pools[0];
 
     auto surface_capabilities = physical_device.getSurfaceCapabilitiesKHR(surface);
     auto swapchain_extent = surface_capabilities.currentExtent;
@@ -83,92 +126,221 @@ void __stdcall ray_trace(
         }
     );
 
-    vk::PhysicalDeviceMemoryProperties memory_properties = physical_device.getMemoryProperties();
+    auto physical_devices_memory_properties = std::vector<vk::PhysicalDeviceMemoryProperties>(physical_devices.size());
+    std::ranges::transform(
+        physical_devices,
+        physical_devices_memory_properties.begin(),
+        [](auto physical_device) {
+            return physical_device.getMemoryProperties();
+        }
+    );
+    auto memory_properties = physical_devices_memory_properties[0];
 
-    auto render_target_images = std::vector<VulkanImage>(swapchain_image_count);
-    auto summed_images = std::vector<VulkanImage>(swapchain_image_count);
-    {
-        auto extent = vk::Extent3D{ swapchain_extent.width, swapchain_extent.height, 1 };
-        std::ranges::generate(
-            render_target_images,
-            [device, extent, &memory_properties]() {
-                return vulkan::create_image(
-                    device, extent, vk::Format::eR8G8B8A8Unorm, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc, memory_properties
-                    );
-            }
-            );
-        std::ranges::generate(
-            summed_images,
-            [device, extent, &memory_properties]() {
-                return vulkan::create_image(
-                    device, extent, vk::Format::eR32G32B32A32Sfloat, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferDst, memory_properties
+    auto render_image_count = swapchain_image_count;
+    auto render_image_indices = std::vector<uint32_t>(render_image_count);
+    std::ranges::iota(render_image_indices, 0);
+
+    auto physical_devices_render_target_images = std::vector<std::vector<VulkanImage>>(devices.size());
+    auto physical_devices_summed_images = std::vector<std::vector<VulkanImage>>(devices.size());
+
+    std::ranges::for_each(
+        physical_device_indices,
+        [&physical_devices_render_target_images, &physical_devices_summed_images, render_image_count, swapchain_extent, &devices, &physical_devices_memory_properties](auto i) {
+            auto render_target_images = std::vector<VulkanImage>(render_image_count);
+            auto summed_images = std::vector<VulkanImage>(render_image_count);
+            {
+                auto extent = vk::Extent3D{ swapchain_extent.width, swapchain_extent.height, 1 };
+                std::ranges::generate(
+                    render_target_images,
+                    [device = devices[i], extent, &memory_properties=physical_devices_memory_properties[i]]() {
+                        return vulkan::create_image(
+                            device, extent, vk::Format::eR8G8B8A8Unorm, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc, memory_properties
+                        );
+                    }
+                );
+                std::ranges::generate(
+                    summed_images,
+                    [device = devices[i], extent, &memory_properties = physical_devices_memory_properties[i]]() {
+                        return vulkan::create_image(
+                            device, extent, vk::Format::eR32G32B32A32Sfloat, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferDst, memory_properties
+                        );
+                    }
                 );
             }
-        );
-    }
+            physical_devices_render_target_images[i] = render_target_images;
+            physical_devices_summed_images[i] = summed_images;
+        });
+    auto render_target_images = physical_devices_render_target_images[0];
+    auto summed_images = physical_devices_summed_images[0];
 
-    auto fences = vulkan::create_fences(device, swapchain_images.size());
+    auto physical_devices_fences = std::vector<std::vector<vk::Fence>>(physical_devices.size());
+    std::ranges::transform(
+        devices,
+        physical_devices_fences.begin(),
+        [render_image_count](auto device) {
+            auto fences = vulkan::create_fences(device, render_image_count);
+            return fences;
+        }
+    );
+    auto fences = physical_devices_fences[0];
+    
+    auto physical_devices_next_image_semaphores = std::vector<std::vector<vk::Semaphore>>(physical_devices.size());
+    std::ranges::transform(
+        devices,
+        physical_devices_next_image_semaphores.begin(),
+        [render_image_count](auto device) {
+            auto next_image_semaphores = vulkan::create_semaphores(device, render_image_count + 1);
+            return next_image_semaphores;
+        }
+    );
+    auto next_image_semaphores = physical_devices_next_image_semaphores[0];
 
-    auto next_image_semaphores = vulkan::create_semaphores(device, swapchain_images.size() + 1);
-    auto render_image_semaphores = vulkan::create_semaphores(device, swapchain_images.size());
+    auto physical_devices_render_image_semaphores = std::vector<std::vector<vk::Semaphore>>(physical_devices.size());
+    std::ranges::transform(
+        devices,
+        physical_devices_render_image_semaphores.begin(),
+        [render_image_count](auto device) {
+            auto render_image_semaphores = vulkan::create_semaphores(device, render_image_count);
+            return render_image_semaphores;
+        }
+    );
+    auto render_image_semaphores = physical_devices_render_image_semaphores[0];
 
     auto scene = generateRandomScene(view_window.get_cursor_position());
 
-    std::vector<vk::AabbPositionsKHR> aabbs(scene.sphereAmount);
+    auto sphere_amount = scene.sphereAmount;
 
-    auto aabb_buffers = std::vector<VulkanBuffer>(swapchain_image_count);
-    std::ranges::generate(
-        aabb_buffers,
-        [device, &aabbs, &memory_properties]() {
-            return vulkan::create_aabb_buffer(device, aabbs.size(), memory_properties);
+    auto physical_devices_aabb_buffers = std::vector<std::vector<VulkanBuffer>>(physical_devices.size());
+    std::ranges::transform(
+        physical_device_indices,
+        physical_devices_aabb_buffers.begin(),
+        [sphere_amount, render_image_count, &devices, &physical_devices_memory_properties](auto i) {
+            auto aabb_buffers = std::vector<VulkanBuffer>(render_image_count);
+            std::ranges::generate(
+                aabb_buffers,
+                [device = devices[i], sphere_amount, &memory_properties = physical_devices_memory_properties[i]]() {
+                    return vulkan::create_aabb_buffer(device, sphere_amount, memory_properties);
+                }
+            );
+            return aabb_buffers;
         }
     );
+    auto aabb_buffers = physical_devices_aabb_buffers[0];
 
-    auto dynamicDispatchLoader = vk::detail::DispatchLoaderDynamic(instance, vkGetInstanceProcAddr, device);
+    std::vector<vk::AabbPositionsKHR> aabbs(sphere_amount);
 
-    auto aabbs_geometries = std::vector<vk::AccelerationStructureGeometryKHR>(swapchain_image_count);
-    std::ranges::fill(aabbs_geometries, vk::AccelerationStructureGeometryKHR{.geometryType = vk::GeometryTypeKHR::eAabbs, .flags = vk::GeometryFlagBitsKHR::eOpaque});
+    auto physical_devices_dynamic_dispatch_loader = std::vector<vk::detail::DispatchLoaderDynamic>(physical_devices.size());
+    std::ranges::transform(
+        devices,
+        physical_devices_dynamic_dispatch_loader.begin(),
+        [instance](auto device) {
+            return vk::detail::DispatchLoaderDynamic(instance, vkGetInstanceProcAddr, device);
+        }
+    );
+    auto dynamicDispatchLoader = physical_devices_dynamic_dispatch_loader[0];
 
-    auto bottom_accels = std::vector<VulkanAccelerationStructure>(swapchain_image_count);
-    auto bottom_accel_build_infos = std::vector<vk::AccelerationStructureBuildGeometryInfoKHR>(swapchain_image_count);
-    auto swapchain_image_indices = std::vector<uint32_t>(swapchain_image_count);
-    std::ranges::iota(swapchain_image_indices, 0);
+    auto physical_devices_aabbs_geometries = std::vector<std::vector<vk::AccelerationStructureGeometryKHR>>(physical_devices.size());
+    auto physical_devices_bottom_accels = std::vector<std::vector<VulkanAccelerationStructure>>(physical_devices.size());
+    auto physical_devices_bottom_accel_build_infos = std::vector<std::vector<vk::AccelerationStructureBuildGeometryInfoKHR>>(physical_devices.size());
     std::ranges::for_each(
-        swapchain_image_indices,
-        [&bottom_accels, &bottom_accel_build_infos, &aabbs_geometries,
-         device, &aabb_buffers, &aabbs, &memory_properties, &dynamicDispatchLoader](uint32_t i) {
-            auto [bottom_accel, bottom_accel_build_info] = vulkan::createBottomAccelerationStructure(device, aabb_buffers[i], aabbs.size(), aabbs_geometries[i], memory_properties, dynamicDispatchLoader);
-            bottom_accels[i] = bottom_accel;
-            bottom_accel_build_infos[i] = bottom_accel_build_info;
+        physical_device_indices,
+        [&physical_devices_aabbs_geometries, &physical_devices_bottom_accels, &physical_devices_bottom_accel_build_infos, render_image_count, render_image_indices,
+         &devices, sphere_amount, &physical_devices_aabb_buffers, &physical_devices_memory_properties, &physical_devices_dynamic_dispatch_loader](auto i) {
+            auto& aabbs_geometries = physical_devices_aabbs_geometries[i];
+            aabbs_geometries.resize(render_image_count);
+            std::ranges::fill(aabbs_geometries, vk::AccelerationStructureGeometryKHR{ .geometryType = vk::GeometryTypeKHR::eAabbs, .flags = vk::GeometryFlagBitsKHR::eOpaque });
+
+            auto bottom_accels = std::vector<VulkanAccelerationStructure>(render_image_count);
+            auto bottom_accel_build_infos = std::vector<vk::AccelerationStructureBuildGeometryInfoKHR>(render_image_count);
+            std::ranges::for_each(
+                render_image_indices,
+                [&bottom_accels, &bottom_accel_build_infos, &aabbs_geometries,
+                device = devices[i], &aabb_buffers = physical_devices_aabb_buffers[i], sphere_amount,
+                &memory_properties = physical_devices_memory_properties[i], &dynamicDispatchLoader = physical_devices_dynamic_dispatch_loader[i]](uint32_t i) {
+                    auto [bottom_accel, bottom_accel_build_info] = vulkan::createBottomAccelerationStructure(device, aabb_buffers[i], sphere_amount, aabbs_geometries[i], memory_properties, dynamicDispatchLoader);
+                    bottom_accels[i] = bottom_accel;
+                    bottom_accel_build_infos[i] = bottom_accel_build_info;
+                }
+            );
+            physical_devices_bottom_accels[i] = bottom_accels;
+            physical_devices_bottom_accel_build_infos[i] = bottom_accel_build_infos;
         }
     );
+    auto& aabbs_geometries = physical_devices_aabbs_geometries[0];
+    auto& bottom_accels = physical_devices_bottom_accels[0];
+    auto& bottom_accel_build_infos = physical_devices_bottom_accel_build_infos[0];
     
-    // ACCELERATION STRUCTURE META INFO
-    auto instances_geometries = std::vector<vk::AccelerationStructureGeometryKHR>(swapchain_image_count);
-    std::ranges::fill(instances_geometries, vk::AccelerationStructureGeometryKHR{ .geometryType = vk::GeometryTypeKHR::eInstances, .flags = vk::GeometryFlagBitsKHR::eOpaque});
-
-    auto top_accels = std::vector<VulkanAccelerationStructure>(swapchain_image_count);
-    auto top_accel_build_infos = std::vector<vk::AccelerationStructureBuildGeometryInfoKHR>(swapchain_image_count);
+    
+    auto physical_devices_instances_geometries = std::vector<std::vector<vk::AccelerationStructureGeometryKHR>>(physical_devices.size());
+    auto physical_devices_top_accels = std::vector<std::vector<VulkanAccelerationStructure>>(physical_devices.size());
+    auto physical_devices_top_accel_build_infos = std::vector<std::vector<vk::AccelerationStructureBuildGeometryInfoKHR>>(physical_devices.size());
     std::ranges::for_each(
-        swapchain_image_indices,
-        [&top_accels, &top_accel_build_infos, &instances_geometries,
-        device, &bottom_accels, &memory_properties, &dynamicDispatchLoader](uint32_t i) {
-            auto [top_accel, top_accel_build_info] = vulkan::createTopAccelerationStructure(device, bottom_accels[i].accelerationStructure, instances_geometries[i], memory_properties, dynamicDispatchLoader);
-            top_accels[i] = top_accel;
-            top_accel_build_infos[i] = top_accel_build_info;
+        physical_device_indices,
+        [&physical_devices_instances_geometries, &physical_devices_top_accels, &physical_devices_top_accel_build_infos,
+         &render_image_indices, render_image_count,
+         &devices, &physical_devices_memory_properties, &physical_devices_bottom_accels, &physical_devices_dynamic_dispatch_loader](auto i) {
+            auto& instances_geometries = physical_devices_instances_geometries[i];
+            instances_geometries.resize(render_image_count);
+            std::ranges::fill(instances_geometries, vk::AccelerationStructureGeometryKHR{ .geometryType = vk::GeometryTypeKHR::eInstances, .flags = vk::GeometryFlagBitsKHR::eOpaque });
+
+            auto top_accels = std::vector<VulkanAccelerationStructure>(render_image_count);
+            auto top_accel_build_infos = std::vector<vk::AccelerationStructureBuildGeometryInfoKHR>(render_image_count);
+            std::ranges::for_each(
+                render_image_indices,
+                [&top_accels, &top_accel_build_infos, &instances_geometries,
+                 device = devices[i], &bottom_accels = physical_devices_bottom_accels[i],
+                 &memory_properties = physical_devices_memory_properties[i], &dynamicDispatchLoader = physical_devices_dynamic_dispatch_loader[i]](uint32_t i) {
+                    auto [top_accel, top_accel_build_info] = vulkan::createTopAccelerationStructure(device, bottom_accels[i].accelerationStructure, instances_geometries[i], memory_properties, dynamicDispatchLoader);
+                    top_accels[i] = top_accel;
+                    top_accel_build_infos[i] = top_accel_build_info;
+                }
+            );
+            physical_devices_top_accels[i] = top_accels;
+            physical_devices_top_accel_build_infos[i] = top_accel_build_infos;
+        });
+    auto instances_geometries = physical_devices_instances_geometries[0];
+    auto top_accels = physical_devices_top_accels[0];
+    auto top_accel_build_infos = physical_devices_top_accel_build_infos[0];
+
+    auto physical_devices_rt_descriptor_set_layout = std::vector<vk::DescriptorSetLayout>(physical_devices.size());
+    std::ranges::transform(
+        devices,
+        physical_devices_rt_descriptor_set_layout.begin(),
+        [](auto device) { return vulkan::create_descriptor_set_layout(device); }
+    );
+    auto rt_descriptor_set_layout = physical_devices_rt_descriptor_set_layout[0];
+
+    auto physical_devices_rt_descriptor_pool = std::vector<vk::DescriptorPool>(physical_devices.size());
+    std::ranges::transform(
+        devices,
+        physical_devices_rt_descriptor_pool.begin(),
+        [render_image_count](auto device) { return vulkan::create_descriptor_pool(device, render_image_count); }
+    );
+    auto rt_descriptor_pool = physical_devices_rt_descriptor_pool[0];
+
+    auto physical_devices_sphere_buffers = std::vector<std::vector<VulkanBuffer>>(physical_devices.size());
+    std::ranges::transform(
+        physical_device_indices,
+        physical_devices_sphere_buffers.begin(),
+        [&devices, &physical_devices_memory_properties, render_image_count](auto i) {
+            auto sphere_buffers = std::vector<VulkanBuffer>(render_image_count);
+            std::ranges::generate(
+                sphere_buffers,
+                [device = devices[i], &memory_properties = physical_devices_memory_properties[i]]() { return vulkan::create_sphere_buffer(device, memory_properties); }
+            );
+            return sphere_buffers;
         }
     );
+    auto sphere_buffers = physical_devices_sphere_buffers[0];
 
-    auto rt_descriptor_set_layout = vulkan::create_descriptor_set_layout(device);
-    auto rt_descriptor_pool = vulkan::create_descriptor_pool(device, swapchain_images.size());
-
-    auto sphere_buffers = std::vector<VulkanBuffer>(swapchain_image_count);
-    std::ranges::generate(
-        sphere_buffers,
-        [device, &memory_properties]() { return vulkan::create_sphere_buffer(device, memory_properties); }
-    );
-
-    auto render_call_info_buffers = vulkan::create_render_call_info_buffers(device, swapchain_images.size(), memory_properties);
+    auto physical_devices_render_call_info_buffers = std::vector<std::vector<VulkanBuffer>>(physical_devices.size());
+    std::ranges::transform(
+        physical_device_indices,
+        physical_devices_render_call_info_buffers.begin(),
+        [&devices, &physical_devices_memory_properties, render_image_count](auto i) {
+            return vulkan::create_render_call_info_buffers(devices[i], render_image_count, physical_devices_memory_properties[i]);
+        });
+    auto render_call_info_buffers = physical_devices_render_call_info_buffers[0];
 
     auto rt_descriptor_sets = vulkan::create_descriptor_set(device, swapchain_images.size(),
         rt_descriptor_set_layout, rt_descriptor_pool, render_target_images, top_accels, sphere_buffers, summed_images, render_call_info_buffers);
