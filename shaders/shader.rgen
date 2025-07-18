@@ -40,24 +40,25 @@ void main() {
     const vec2 size = renderCallInfo.image_size;
     const float aspectRatio = size.x / size.y;
 
-    const vec2 offset = renderCallInfo.offset + gl_LaunchIDEXT.xy;
+    const vec2 render_offset = renderCallInfo.offset + gl_LaunchIDEXT.xy;
+    const vec2 image_offset = gl_LaunchIDEXT.xy;
 
     const Viewport viewport = calculateViewport(aspectRatio);
 
-    vec3 summedPixelColor = imageLoad(summedPixelColorImage, ivec2(offset)).rgb;
+    vec3 summedPixelColor = imageLoad(summedPixelColorImage, ivec2(image_offset)).rgb;
 
     dvec3 sum = summedPixelColor;
     for (uint i = 0; i < renderCallInfo.samplesPerRenderCall; i++) {
-        const vec2 uv = vec2(offset.x + randomFloat(payload.seed), offset.y + randomFloat(payload.seed)) / size;
+        const vec2 uv = vec2(render_offset.x + randomFloat(payload.seed), render_offset.y + randomFloat(payload.seed)) / size;
         const Ray ray = getCameraRay(viewport, uv);
         sum += calculateRayColor(ray);
     }
     summedPixelColor = vec3(sum);
 
-    imageStore(summedPixelColorImage, ivec2(offset), vec4(summedPixelColor, 1.0f));
+    imageStore(summedPixelColorImage, ivec2(image_offset), vec4(summedPixelColor, 1.0f));
 
     const vec3 pixelColor = sqrt(summedPixelColor / float(renderCallInfo.samplesPerRenderCall));
-    imageStore(renderTarget, ivec2(offset), vec4(pixelColor, 1.0f));
+    imageStore(renderTarget, ivec2(image_offset), vec4(pixelColor, 1.0f));
 }
 
 // RENDERING

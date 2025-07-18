@@ -26,8 +26,12 @@ namespace window {
 	struct window {
 		GLFWwindow* glfw_window;
 	};
-	inline window create_window(window_system&, uint32_t width, uint32_t height) {
+	inline window create_window(window_system&, uint32_t width, uint32_t height, uint32_t x = 0, uint32_t y = 0) {
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+		glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
+		glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER, GLFW_TRUE);
+		glfwWindowHint(GLFW_POSITION_X, x);
+		glfwWindowHint(GLFW_POSITION_Y, y);
 		auto glfw_window = glfwCreateWindow(width, height, "GPU Ray Tracing (Vulkan)",
 			nullptr, nullptr);
 		return window{ glfw_window };
