@@ -40,7 +40,7 @@ void __stdcall ray_trace(
 
     auto instance = vulkan::create_instance(required_extensions);
 
-    auto physical_devices = vulkan::pick_physical_devices(instance, Vulkan::get_required_device_extensions()); physical_devices = { physical_devices[1] };
+    auto physical_devices = vulkan::pick_physical_devices(instance, Vulkan::get_required_device_extensions());//physical_devices.resize(1);
     if (physical_devices.size() == 0) {
         throw std::runtime_error{ "No GPUs with required extensions" };
     }
@@ -476,13 +476,18 @@ void __stdcall ray_trace(
 
     auto physical_devices_render_offset = std::vector<glm::u32vec2>(physical_devices.size());
     auto physical_devices_render_extent = std::vector<glm::u32vec2>(physical_devices.size());
-    std::ranges::for_each(
-        physical_device_indices,
-        [&physical_devices_render_offset, &physical_devices_render_extent, width, height, count=physical_devices.size()](auto i) {
-            physical_devices_render_offset[i] = glm::u32vec2(0, height * i / count);
-            physical_devices_render_extent[i] = glm::u32vec2(width, height / count);
+    for (int i = 0; i < physical_devices.size(); i++) {
+        if (i == 0) {
+            physical_devices_render_offset[i] = { 0, 0 };
+            physical_devices_render_extent[i] = { width, height-22*(physical_devices.size()-1) };
         }
-    );
+        else if (i == 1) {
+            physical_devices_render_offset[i] = { 0, physical_devices_render_offset[i-1].y + physical_devices_render_extent[i-1].y };
+            physical_devices_render_extent[i] = { width, height - physical_devices_render_offset[i].y };
+        }
+        else {
+        }
+    }
     
     auto physical_devices_command_buffers = std::vector<std::vector<vk::CommandBuffer>>(physical_devices.size());
     std::ranges::transform(
