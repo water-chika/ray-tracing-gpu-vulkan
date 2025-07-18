@@ -1004,7 +1004,7 @@ namespace vulkan {
         auto& aabbs, auto& bottom_accel_build_infos, auto& bottom_accels,
         auto& top_accel_build_infos, auto& top_accels,
         vk::StridedDeviceAddressRegionKHR sbtRayGenAddressRegion, vk::StridedDeviceAddressRegionKHR sbtMissAddressRegion, vk::StridedDeviceAddressRegionKHR sbtHitAddressRegion,
-        uint32_t width, uint32_t height, vk::detail::DispatchLoaderDynamic& dynamicDispatchLoader) {
+        uint32_t width, uint32_t height, vk::Extent2D image_extent, vk::detail::DispatchLoaderDynamic& dynamicDispatchLoader) {
         auto commandBuffers = std::vector<vk::CommandBuffer>(swapchain_images_count);
         for (int swapChainImageIndex = 0; swapChainImageIndex < swapchain_images_count; swapChainImageIndex++) {
             auto& commandBuffer = commandBuffers[swapChainImageIndex];
@@ -1168,8 +1168,8 @@ namespace vulkan {
                     .dstSubresource = subresourceLayers,
                     .dstOffset = {0, 0, 0},
                     .extent = {
-                            .width = width,
-                            .height = height,
+                            .width = image_extent.width,
+                            .height = image_extent.height,
                             .depth = 1
                     }
             };

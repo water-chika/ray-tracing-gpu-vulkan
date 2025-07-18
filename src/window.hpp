@@ -6,56 +6,50 @@
 
 #include <span>
 
-class window {
-public:
-	window(uint32_t width, uint32_t height) {
+namespace window {
+	struct window_system {};
+	inline window_system init_window_system() {
 		glfwInit();
-		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-		m_window = glfwCreateWindow(width, height, "GPU Ray Tracing (Vulkan)",
-			nullptr, nullptr);
+		return {};
 	}
-	~window() {
-		glfwDestroyWindow(m_window);
+	inline void destroy_window_system(window_system&) {
 		glfwTerminate();
 	}
-
-	void poll_events() {
+	inline void poll_events(window_system&) {
 		glfwPollEvents();
 	}
-private:
-	static void cursor_position_callback(GLFWwindow* window, double xpos, double ypos) {
-
-	}
-public:
-
-	void set_cursor_event() {
-		glfwSetCursorPosCallback(m_window, cursor_position_callback);
-	}
-
-	auto get_cursor_position() {
-		double xpos, ypos;
-		glfwGetCursorPos(m_window, &xpos, &ypos);
-		return std::tuple{ xpos, ypos };
-	}
-
-	bool should_close() {
-		return glfwWindowShouldClose(m_window);
-	}
-
-	auto get_required_extensions() {
+	inline auto get_vulkan_required_extensions(window_system&) {
 		uint32_t count{ 0 };
 		const char** extensions = glfwGetRequiredInstanceExtensions(&count);
 		return std::span{ extensions, count };
 	}
-	auto create_surface(vk::Instance instance) {
+	struct window {
+		GLFWwindow* glfw_window;
+	};
+	inline window create_window(window_system&, uint32_t width, uint32_t height) {
+		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+		auto glfw_window = glfwCreateWindow(width, height, "GPU Ray Tracing (Vulkan)",
+			nullptr, nullptr);
+		return window{ glfw_window };
+	}
+	inline void destroy_window(window& window) {
+		glfwDestroyWindow(window.glfw_window);
+	}
+	inline auto get_window_cursor_position(window& window) {
+		double xpos, ypos;
+		glfwGetCursorPos(window.glfw_window, &xpos, &ypos);
+		return std::tuple{ xpos, ypos };
+	}
+	inline auto should_window_close(window& window) {
+		return glfwWindowShouldClose(window.glfw_window);
+	}
+	inline auto create_window_vulkan_surface(window& window, VkInstance instance) {
 		VkSurfaceKHR surface;
-		auto res = glfwCreateWindowSurface(instance, m_window, nullptr, &surface);
+		auto res = glfwCreateWindowSurface(instance, window.glfw_window, nullptr, &surface);
 		if (res != VK_SUCCESS) {
 			throw std::runtime_error{ "failed to create surface" };
 		}
 
-		return vk::SurfaceKHR{ surface };
+		return surface;
 	}
-private:
-	GLFWwindow* m_window;
-};
+}
