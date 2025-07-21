@@ -48,7 +48,6 @@ void ray_trace(
     std::ranges::iota(physical_device_indices, 0);
 
     int test_physical_device_index = 0;
-    //auto physical_device = physical_devices[test_physical_device_index];
 
     auto physical_devices_memory_properties = std::vector<vk::PhysicalDeviceMemoryProperties>(physical_devices.size());
     std::ranges::transform(
@@ -58,7 +57,6 @@ void ray_trace(
             return physical_device.getMemoryProperties();
         }
     );
-    //auto memory_properties = physical_devices_memory_properties[test_physical_device_index];
 
     auto physical_devices_render_offset = std::vector<glm::u32vec2>(physical_devices.size());
     auto physical_devices_render_extent = std::vector<glm::u32vec2>(physical_devices.size());
@@ -94,7 +92,6 @@ void ray_trace(
             return window::create_window_vulkan_surface(window, instance);
         }
     );
-    //auto surface = physical_devices_surface[0];
 
     auto compute_queue_families = std::vector<uint32_t>(physical_devices.size());
     auto present_queue_families = std::vector<uint32_t>(physical_devices.size());
@@ -105,8 +102,6 @@ void ray_trace(
         }
     );
 
-    //auto compute_queue_family = compute_queue_families[test_physical_device_index];
-    //auto present_queue_family = present_queue_families[test_physical_device_index];
 
     auto devices = std::vector<vk::Device>(physical_devices.size());
     auto physical_devices_compute_queue = std::vector<vk::Queue>(physical_devices.size());
@@ -123,9 +118,7 @@ void ray_trace(
         }
     );
 
-    //auto device = devices[test_physical_device_index];
-    //auto compute_queue = physical_devices_compute_queue[test_physical_device_index];
-    //auto present_queue = physical_devices_present_queue[test_physical_device_index];
+
 
     auto physical_devices_command_pool = std::vector<vk::CommandPool>(physical_devices.size());
     std::ranges::for_each(
@@ -135,7 +128,6 @@ void ray_trace(
             physical_devices_command_pool[i] = command_pool;
         }
     );
-    //auto command_pool = physical_devices_command_pool[test_physical_device_index];
 
     auto physical_devices_surface_capabilities = std::vector<vk::SurfaceCapabilitiesKHR>(physical_devices.size());
     std::ranges::transform(
@@ -145,7 +137,6 @@ void ray_trace(
             return physical_devices[i].getSurfaceCapabilitiesKHR(physical_devices_surface[i]);
         }
     );
-    //auto surface_capabilities = physical_devices_surface_capabilities[test_physical_device_index];
 
     auto physical_devices_swapchain_extent = std::vector<vk::Extent2D>(physical_devices.size());
     std::ranges::transform(
@@ -178,7 +169,6 @@ void ray_trace(
         }
     );
     
-    //auto swapchain_image_count = image_count;
     auto physical_devices_swapchain_images = std::vector<std::vector<vk::Image>>(physical_devices.size());
     std::ranges::transform(
         physical_device_indices,
@@ -277,7 +267,6 @@ void ray_trace(
             return fences;
         }
     );
-    //auto fences = physical_devices_fences[test_physical_device_index];
     
     auto physical_devices_next_image_semaphores = std::vector<std::vector<vk::Semaphore>>(physical_devices.size());
     std::ranges::transform(
@@ -288,7 +277,6 @@ void ray_trace(
             return next_image_semaphores;
         }
     );
-    //auto next_image_semaphores = physical_devices_next_image_semaphores[test_physical_device_index];
 
     auto physical_devices_render_image_semaphores = std::vector<std::vector<vk::Semaphore>>(physical_devices.size());
     std::ranges::transform(
@@ -299,7 +287,6 @@ void ray_trace(
             return render_image_semaphores;
         }
     );
-    //auto render_image_semaphores = physical_devices_render_image_semaphores[test_physical_device_index];
 
     auto scene = generateRandomScene(window::get_window_cursor_position(view_window));
 
@@ -542,7 +529,6 @@ void ray_trace(
                 physical_devices_dynamic_dispatch_loader[i]);
         }
     );
-    //auto& command_buffers = physical_devices_command_buffers[test_physical_device_index];
 
     auto physical_devices_next_image_semaphores_indices = std::vector<std::vector<uint32_t>>(physical_devices.size());
     std::ranges::transform(
