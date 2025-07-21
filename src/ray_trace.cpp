@@ -620,8 +620,8 @@ void ray_trace(
                         .samplesPerRenderCall = samples,
                         .offset = physical_devices_render_offset[i],
                         .image_size = {width, height},
-                        .camera_pos = {13.0f, 2.0f, -3.0f, 0},
-                        .camera_dir = glm::vec4{camera_dir,0},
+                        .camera_pos = {13.0f, 11.0f, -3.0f, 0},
+                        .camera_dir = {-13.0f, -11.0f, 3.0f, 0},
                     };
                     void* data = devices[i].mapMemory(physical_devices_render_call_info_buffers[i][physical_devices_swapchain_image_index[i]].memory, 0, sizeof(RenderCallInfo));
                     memcpy(data, &renderCallInfo, sizeof(RenderCallInfo));
@@ -656,7 +656,10 @@ void ray_trace(
                         .setWaitDstStageMask(wait_stage_masks)
                         .setSignalSemaphores(signal_semaphores);
 
-                    physical_devices_compute_queue[i].submit(1, &submitInfo, physical_devices_fences[i][swapchain_image_index]);
+                    auto res = physical_devices_compute_queue[i].submit(1, &submitInfo, physical_devices_fences[i][swapchain_image_index]);
+                    if (res != vk::Result::eSuccess) {
+                        throw std::runtime_error{ "failed to submit" };
+                    }
                 }
             );
 
