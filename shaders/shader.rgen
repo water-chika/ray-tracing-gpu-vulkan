@@ -15,6 +15,8 @@ layout(binding = 4) uniform RenderCallInfo {
     uint samplesPerRenderCall;
     uvec2 offset;
     uvec2 image_size;
+    vec4 camera_pos;
+    vec4 camera_dir;
 } renderCallInfo;
 
 layout(location = 0) rayPayloadEXT Payload payload;
@@ -24,7 +26,7 @@ layout(location = 0) rayPayloadEXT Payload payload;
 const float MAX_RAY_COLLISION_DISTANCE = 10000.0f;
 const uint MAX_DEPTH = 50;
 
-const Camera camera = Camera(25.0f, 0.0f, 10.0f, vec3(13.0f, 2.0f, -3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
+Camera camera = Camera(25.0f, 0.0f, 10.0f, vec3(13.0f, 2.0f, -3.0f), vec3(0.0f), vec3(0.0f, 1.0f, 0.0f));
 
 
 // METHODS
@@ -42,6 +44,9 @@ void main() {
 
     const vec2 render_offset = renderCallInfo.offset + gl_LaunchIDEXT.xy;
     const vec2 image_offset = gl_LaunchIDEXT.xy;
+
+    camera.lookFrom = renderCallInfo.camera_pos.xyz;
+    camera.lookAt = renderCallInfo.camera_pos.xyz + renderCallInfo.camera_dir.xyz;
 
     const Viewport viewport = calculateViewport(aspectRatio);
 

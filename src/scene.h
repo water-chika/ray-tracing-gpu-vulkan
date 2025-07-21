@@ -76,30 +76,14 @@ inline glm::vec4 getRandomColor(std::mt19937& engine) {
     return { r + m, g + m, b + m, 1.0f };
 }
 
-Scene generateRandomScene(auto cursor_pos) {
+Scene generateRandomScene() {
     Scene scene = {};
-
-    auto [x, y] = cursor_pos;
-    x /= 1000.0;
-    y /= 1000.0;
-
-    auto view_matrix = glm::mat4(
-        cos(x), 0, sin(x), 0,
-        0,      1,      0, 0,
-        -sin(x),0, cos(x), 0,
-        0,      0,      0, 1
-    ) * glm::mat4(
-        cos(y), sin(y), 0, 0,
-        -sin(y), cos(y), 0, 0,
-        0, 0, 1, 0,
-        0, 0, 0, 1
-    );
 
     auto now = std::chrono::steady_clock::now();
     auto t = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count() * 0.001f;
 
     scene.spheres[0] = {
-            .geometry = glm::vec4(0.0f, -1000.0f, 1.0f, 1000.0f) * view_matrix,
+            .geometry = glm::vec4(0.0f, -1000.0f, 1.0f, 1000.0f),
             .materialType = MaterialType::DIFFUSE,
             .textureType = TextureType::CHECKERED,
             .colors = {glm::vec4(0.05f, 0.05f, 0.05f, 1.0f), glm::vec4(0.95f, 0.95f, 0.95f, 1.0f)},
@@ -107,7 +91,7 @@ Scene generateRandomScene(auto cursor_pos) {
     };
 
     scene.spheres[1] = {
-            .geometry = glm::vec4(-4.0f, 1.0f, cos(2 * t), 1.0f) * view_matrix,
+            .geometry = glm::vec4(-4.0f, 1.0f, cos(2 * t), 1.0f),
             .materialType = MaterialType::DIFFUSE,
             .textureType = TextureType::SOLID,
             .colors = {glm::vec4(0.6f, 0.3f, 0.1f, 1.0f)},
@@ -115,7 +99,7 @@ Scene generateRandomScene(auto cursor_pos) {
     };
 
     scene.spheres[2] = {
-            .geometry = glm::vec4(4.0f, 1.0f, cos(3 * t), 1.0f) * view_matrix,
+            .geometry = glm::vec4(4.0f, 1.0f, cos(3 * t), 1.0f),
             .materialType = MaterialType::METAL,
             .textureType = TextureType::SOLID,
             .colors = {glm::vec4(0.8f, 0.8f, 0.8f, 1.0f)},
@@ -124,7 +108,7 @@ Scene generateRandomScene(auto cursor_pos) {
 
     auto offset = cos(t);
     scene.spheres[3] = {
-            .geometry = glm::vec4(0.0f, 1.0f, offset, 1.0f) * view_matrix,
+            .geometry = glm::vec4(0.0f, 1.0f, offset, 1.0f),
             .materialType = MaterialType::REFRACTIVE,
             .textureType = TextureType::SOLID,
             .colors = {glm::vec4(1.0f, 1.0f, 1.0f, 1.0f)},
@@ -138,7 +122,7 @@ Scene generateRandomScene(auto cursor_pos) {
     for (int a = -11; a < 11; a++) {
         for (int b = -11; b < 11; b++) {
             scene.spheres[sphereIndex].geometry =
-                glm::vec4(float(a) + 0.9f * randomFloat(engine), 0.2f, float(b) + 0.9f * randomFloat(engine), 0.2f) * view_matrix;
+                glm::vec4(float(a) + 0.9f * randomFloat(engine), 0.2f, float(b) + 0.9f * randomFloat(engine), 0.2f);
 
             const float materialProbability = randomFloat(engine);
 

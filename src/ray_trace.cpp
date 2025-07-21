@@ -288,7 +288,7 @@ void ray_trace(
         }
     );
 
-    auto scene = generateRandomScene(window::get_window_cursor_position(view_window));
+    auto scene = generateRandomScene();
 
     auto sphere_amount = scene.sphereAmount;
 
@@ -546,7 +546,7 @@ void ray_trace(
 
     while (!window::should_window_close(view_window)) {
         auto cursor_pos = window::get_window_cursor_position(view_window);
-        scene = generateRandomScene(cursor_pos);
+        scene = generateRandomScene();
         std::ranges::transform(
             std::span{ scene.spheres, scene.sphereAmount },
             aabbs.begin(),
@@ -565,6 +565,10 @@ void ray_trace(
             }
         );
 
+        auto [x, y] = cursor_pos;
+        x /= 500.0;
+        y /= 500.0;
+        auto camera_dir = glm::vec3{sin(x)*cos(y), -sin(y), cos(x)*cos(y)};
 
         {
             auto spheres = std::span{ scene.spheres, scene.sphereAmount };
@@ -610,12 +614,14 @@ void ray_trace(
             std::ranges::for_each(
                 physical_device_indices,
                 [&devices, &physical_devices_swapchain_image_index, samples, width, height, &physical_devices_render_offset,
-                 &physical_devices_render_call_info_buffers](auto i) {
+                 &physical_devices_render_call_info_buffers, &camera_dir](auto i) {
                     RenderCallInfo renderCallInfo = {
                         .number = 0,
                         .samplesPerRenderCall = samples,
                         .offset = physical_devices_render_offset[i],
-                        .image_size = {width, height}
+                        .image_size = {width, height},
+                        .camera_pos = {13.0f, 2.0f, -3.0f, 0},
+                        .camera_dir = glm::vec4{camera_dir,0},
                     };
                     void* data = devices[i].mapMemory(physical_devices_render_call_info_buffers[i][physical_devices_swapchain_image_index[i]].memory, 0, sizeof(RenderCallInfo));
                     memcpy(data, &renderCallInfo, sizeof(RenderCallInfo));
