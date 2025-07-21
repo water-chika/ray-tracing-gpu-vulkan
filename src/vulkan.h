@@ -138,9 +138,6 @@ namespace vulkan {
             if (computeFamilyFound && presentFamilyFound)
                 break;
         }
-        if (!computeFamilyFound || !presentFamilyFound) {
-            throw std::runtime_error{ "can not find compute queue or present queue" };
-        }
 
         return std::pair{ computeQueueFamily, presentQueueFamily };
     }
