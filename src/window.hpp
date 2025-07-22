@@ -44,6 +44,14 @@ namespace window {
 		glfwGetCursorPos(window.glfw_window, &xpos, &ypos);
 		return std::tuple{ xpos, ypos };
 	}
+	inline void set_window_position(window& window, auto pos) {
+		auto [x, y] = pos;
+		glfwSetWindowPos(window.glfw_window, x, y);
+	}
+	inline void set_window_size(window& window, auto size) {
+		auto [width, height] = size;
+		glfwSetWindowSize(window.glfw_window, width, height);
+	}
 	inline auto should_window_close(window& window) {
 		return glfwWindowShouldClose(window.glfw_window);
 	}
