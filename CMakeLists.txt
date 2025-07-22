@@ -32,6 +32,8 @@ add_library(
         src/scene.h
         src/scene.cpp
         src/render_call_info.h
+        src/workload_tuner.hpp
+        src/workload_tuner.cpp
         ${CMAKE_CURRENT_BINARY_DIR}/include/shader_path.hpp
 )
 

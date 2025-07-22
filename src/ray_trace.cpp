@@ -9,6 +9,7 @@
 #include <iostream>
 #include <algorithm>
 #include <cstdint>
+#include <execution>
 
 extern "C"
 #if WIN32
@@ -80,6 +81,8 @@ void ray_trace(
     using namespace std::literals;
     auto previous_duration_per_frame = 1000000000ns;
     auto previous_physical_devices_render_extent = physical_devices_render_extent;
+
+    uint32_t benchmark_frame_count = 100;
 
     while (!window::should_window_close(view_window)) {
         auto physical_devices_render_offset = std::vector<glm::u32vec2>(physical_devices.size());
@@ -560,11 +563,19 @@ void ray_trace(
         auto physical_devices_next_image_free_semaphore_index = std::vector<uint32_t>(physical_devices.size());
         physical_devices_next_image_free_semaphore_index = physical_devices_render_image_count;
 
+        auto physical_devices_present_time = std::vector<std::chrono::steady_clock::time_point>(physical_devices.size());
+        std::ranges::generate(
+            physical_devices_present_time,
+            []() {
+                return std::chrono::steady_clock::now();
+            }
+        );
+        auto physical_devices_duration_of_gpu = std::vector<std::chrono::steady_clock::duration>(physical_devices.size());
         auto begin_time = std::chrono::steady_clock::now();
         uint32_t frame_index = 0;
-        const uint32_t benchmark_frame_count = rand() % 100;
+        
         while (!window::should_window_close(view_window)
-            && frame_index++ < 200) {
+            && frame_index++ < benchmark_frame_count) {
             auto cursor_pos = window::get_window_cursor_position(view_window);
             scene = generateRandomScene();
             std::ranges::transform(
@@ -593,15 +604,18 @@ void ray_trace(
             {
                 auto spheres = std::span{ scene.spheres, scene.sphereAmount };
 
+                auto physical_devices_acquire_image_time = std::vector<std::chrono::steady_clock::time_point>(physical_devices.size());
                 auto physical_devices_swapchain_image_index = std::vector<uint32_t>(physical_devices.size());
                 auto physical_devices_acquire_image_semaphore = std::vector<vk::Semaphore>(physical_devices.size());
-                std::ranges::for_each(
-                    physical_device_indices,
+                std::for_each(
+                    std::execution::par_unseq,
+                    physical_device_indices.begin(), physical_device_indices.end(),
                     [&physical_devices_swapchain_image_index,
                     &physical_devices_acquire_image_semaphore,
                     &devices,
                     &physical_devices_next_image_semaphores, &physical_devices_swapchain,
-                    &physical_devices_next_image_free_semaphore_index, &physical_devices_next_image_semaphores_indices](auto i) {
+                    &physical_devices_next_image_free_semaphore_index, &physical_devices_next_image_semaphores_indices,
+                    &physical_devices_acquire_image_time](auto i) {
                         uint32_t swapchain_image_index = 0;
                         auto acquire_image_semaphore = physical_devices_next_image_semaphores[i][physical_devices_next_image_free_semaphore_index[i]];
                         if (auto [result, index] = devices[i].acquireNextImageKHR(physical_devices_swapchain[i], UINT64_MAX, acquire_image_semaphore);
@@ -611,9 +625,19 @@ void ray_trace(
                         else {
                             throw std::runtime_error{ "failed to acquire next image" };
                         }
+                        physical_devices_acquire_image_time[i] = std::chrono::steady_clock::now();
                         std::swap(physical_devices_next_image_free_semaphore_index[i], physical_devices_next_image_semaphores_indices[i][swapchain_image_index]);
                         physical_devices_acquire_image_semaphore[i] = acquire_image_semaphore;
                         physical_devices_swapchain_image_index[i] = swapchain_image_index;
+                    }
+                );
+                std::ranges::for_each(
+                    physical_device_indices,
+                    [&physical_devices_acquire_image_time,
+                     &physical_devices_present_time,
+                     &physical_devices_duration_of_gpu](auto i) {
+                        auto duration = physical_devices_acquire_image_time[i] - physical_devices_present_time[i];
+                        physical_devices_duration_of_gpu[i] += duration;
                     }
                 );
 
@@ -658,8 +682,9 @@ void ray_trace(
                     }
                 );
 
-                std::ranges::for_each(
-                    physical_device_indices,
+                std::for_each(
+                    std::execution::par_unseq,
+                    physical_device_indices.begin(), physical_device_indices.end(),
                     [&physical_devices_compute_queue, &physical_devices_command_buffers,
                     &physical_devices_render_image_semaphores, &physical_devices_swapchain_image_index,
                     &physical_devices_acquire_image_semaphore, &physical_devices_fences](auto i) {
@@ -683,10 +708,12 @@ void ray_trace(
                     }
                 );
 
-                std::ranges::for_each(
-                    physical_device_indices,
+                std::for_each(
+                    std::execution::par_unseq,
+                    physical_device_indices.begin(), physical_device_indices.end(),
                     [&physical_devices_present_queue,
-                    &physical_devices_render_image_semaphores, &physical_devices_swapchain, &physical_devices_swapchain_image_index](auto i) {
+                     &physical_devices_render_image_semaphores, &physical_devices_swapchain, &physical_devices_swapchain_image_index,
+                     &physical_devices_present_time](auto i) {
                         auto present_queue = physical_devices_present_queue[i];
                         auto swapchain_image_index = physical_devices_swapchain_image_index[i];
                         vk::PresentInfoKHR presentInfo = {
@@ -701,6 +728,7 @@ void ray_trace(
                         if (res != vk::Result::eSuccess) {
                             std::cerr << "present return: " << res << std::endl;
                         }
+                        physical_devices_present_time[i] = std::chrono::steady_clock::now();
                     }
                 );
             }
@@ -711,22 +739,55 @@ void ray_trace(
         auto end_time = std::chrono::steady_clock::now();
         auto duration = end_time - begin_time;
         auto duration_per_frame = duration / frame_index;
-        std::cout << "average duration per frame: " << duration_per_frame << std::endl;
+        std::cout << "duration: " << duration << std::endl;
+
+        benchmark_frame_count = (4s+ duration_per_frame) / duration_per_frame;
+
         if (previous_duration_per_frame < duration_per_frame) {
             physical_devices_render_extent = previous_physical_devices_render_extent;
             duration_per_frame = previous_duration_per_frame;
         }
+        previous_physical_devices_render_extent = physical_devices_render_extent;
+        previous_duration_per_frame = duration_per_frame;
+        if (false) {
+            float total_v = 0;
+            auto physical_devices_v = std::vector<float>(physical_devices.size());
+            std::ranges::for_each(
+                physical_device_indices,
+                [&physical_devices_duration_of_gpu, &physical_devices_render_extent,
+                &total_v, &physical_devices_v](auto i) {
+                    auto v = static_cast<float>(physical_devices_render_extent[i].y) / physical_devices_duration_of_gpu[i].count();
+                    std::cout << physical_devices_duration_of_gpu[i] << ", ";
+                    total_v += v;
+                    physical_devices_v[i] = v;
+                }
+            );
+            std::cout << std::endl;
 
-        {
+            uint32_t remain = height;
+            std::ranges::for_each(
+                physical_device_indices,
+                [&physical_devices_render_extent, &physical_devices_v, total_v, height, &remain](auto i) {
+                    physical_devices_render_extent[i].y = static_cast<uint32_t>(height * physical_devices_v[i] / total_v);
+                    remain -= physical_devices_render_extent[i].y;
+                }
+            );
+            assert(remain < physical_devices.size());
+            for (int i = 0; i < remain; i++) {
+                physical_devices_render_extent[i].y++;
+            }
+            remain = 0;
+        }
+        else if (true) {
             previous_physical_devices_render_extent = physical_devices_render_extent;
             previous_duration_per_frame = duration_per_frame;
 
             auto extent_offset = std::vector<int32_t>(physical_devices.size());
             auto dec_index = rand() % physical_devices.size();
             auto inc_index = rand() % physical_devices.size();
-            if (physical_devices_render_extent[dec_index].y > 8) {
-                physical_devices_render_extent[inc_index].y += 8;
-                physical_devices_render_extent[dec_index].y -= 8;
+            if (physical_devices_render_extent[dec_index].y > 1) {
+                physical_devices_render_extent[inc_index].y += 1;
+                physical_devices_render_extent[dec_index].y -= 1;
             }
         }
 
