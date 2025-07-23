@@ -6,6 +6,8 @@
 
 #include "vulkan.h"
 
+#include "workload_tuner.hpp"
+
 #include <iostream>
 #include <algorithm>
 #include <cstdint>
@@ -19,7 +21,8 @@ void ray_trace(
     uint32_t samples,
     bool storeRenderResult,
     uint32_t width,
-    uint32_t height
+    uint32_t height,
+    uint32_t gpu_count
 ) {
     auto window_system = window::init_window_system();
 
@@ -42,6 +45,9 @@ void ray_trace(
     auto instance = vulkan::create_instance(required_extensions);
 
     auto physical_devices = vulkan::pick_physical_devices(instance, Vulkan::get_required_device_extensions());
+    if (physical_devices.size() > gpu_count) {
+        physical_devices.resize(gpu_count);
+    }
     if (physical_devices.size() == 0) {
         throw std::runtime_error{ "No GPUs with required extensions" };
     }
@@ -78,9 +84,8 @@ void ray_trace(
     );
     physical_devices_render_extent[0].y += height - physical_devices.size() * (height / physical_devices.size());
 
-    using namespace std::literals;
-    auto previous_duration_per_frame = 1000000000ns;
-    auto previous_physical_devices_render_extent = physical_devices_render_extent;
+    tune::tuning_info tuning_info{};
+    tune::init_tuning_info(tuning_info, height, physical_devices.size());
 
     uint32_t benchmark_frame_count = 100;
 
@@ -563,231 +568,214 @@ void ray_trace(
         auto physical_devices_next_image_free_semaphore_index = std::vector<uint32_t>(physical_devices.size());
         physical_devices_next_image_free_semaphore_index = physical_devices_render_image_count;
 
-        auto physical_devices_present_time = std::vector<std::chrono::steady_clock::time_point>(physical_devices.size());
-        std::ranges::generate(
-            physical_devices_present_time,
-            []() {
-                return std::chrono::steady_clock::now();
-            }
-        );
-        auto physical_devices_duration_of_gpu = std::vector<std::chrono::steady_clock::duration>(physical_devices.size());
-        auto begin_time = std::chrono::steady_clock::now();
-        uint32_t frame_index = 0;
-        
-        while (!window::should_window_close(view_window)
-            && frame_index++ < benchmark_frame_count) {
-            auto cursor_pos = window::get_window_cursor_position(view_window);
-            scene = generateRandomScene();
-            std::ranges::transform(
-                std::span{ scene.spheres, scene.sphereAmount },
-                aabbs.begin(),
-                [](auto& sphere) {
-                    auto getAABBFromSphere = [](const glm::vec4& geometry) {
-                        return vk::AabbPositionsKHR{
-                                .minX = geometry.x - geometry.w,
-                                .minY = geometry.y - geometry.w,
-                                .minZ = geometry.z - geometry.w,
-                                .maxX = geometry.x + geometry.w,
-                                .maxY = geometry.y + geometry.w,
-                                .maxZ = geometry.z + geometry.w
-                        };
-                        };
-                    return getAABBFromSphere(sphere.geometry);
+        while (!window::should_window_close(view_window)) {
+            auto physical_devices_present_time = std::vector<std::chrono::steady_clock::time_point>(physical_devices.size());
+            std::ranges::generate(
+                physical_devices_present_time,
+                []() {
+                    return std::chrono::steady_clock::now();
                 }
             );
+            auto physical_devices_duration_of_gpu = std::vector<std::chrono::steady_clock::duration>(physical_devices.size());
+            auto begin_time = std::chrono::steady_clock::now();
+            uint32_t frame_index = 0;
 
-            auto [x, y] = cursor_pos;
-            x /= 500.0;
-            y /= 500.0;
-            auto camera_dir = glm::vec3{ sin(x) * cos(y), -sin(y), cos(x) * cos(y) };
-
-            {
-                auto spheres = std::span{ scene.spheres, scene.sphereAmount };
-
-                auto physical_devices_acquire_image_time = std::vector<std::chrono::steady_clock::time_point>(physical_devices.size());
-                auto physical_devices_swapchain_image_index = std::vector<uint32_t>(physical_devices.size());
-                auto physical_devices_acquire_image_semaphore = std::vector<vk::Semaphore>(physical_devices.size());
-                std::for_each(
-                    std::execution::par_unseq,
-                    physical_device_indices.begin(), physical_device_indices.end(),
-                    [&physical_devices_swapchain_image_index,
-                    &physical_devices_acquire_image_semaphore,
-                    &devices,
-                    &physical_devices_next_image_semaphores, &physical_devices_swapchain,
-                    &physical_devices_next_image_free_semaphore_index, &physical_devices_next_image_semaphores_indices,
-                    &physical_devices_acquire_image_time](auto i) {
-                        uint32_t swapchain_image_index = 0;
-                        auto acquire_image_semaphore = physical_devices_next_image_semaphores[i][physical_devices_next_image_free_semaphore_index[i]];
-                        if (auto [result, index] = devices[i].acquireNextImageKHR(physical_devices_swapchain[i], UINT64_MAX, acquire_image_semaphore);
-                            result == vk::Result::eSuccess || result == vk::Result::eSuboptimalKHR) {
-                            swapchain_image_index = index;
-                        }
-                        else {
-                            throw std::runtime_error{ "failed to acquire next image" };
-                        }
-                        physical_devices_acquire_image_time[i] = std::chrono::steady_clock::now();
-                        std::swap(physical_devices_next_image_free_semaphore_index[i], physical_devices_next_image_semaphores_indices[i][swapchain_image_index]);
-                        physical_devices_acquire_image_semaphore[i] = acquire_image_semaphore;
-                        physical_devices_swapchain_image_index[i] = swapchain_image_index;
-                    }
-                );
-                std::ranges::for_each(
-                    physical_device_indices,
-                    [&physical_devices_acquire_image_time,
-                     &physical_devices_present_time,
-                     &physical_devices_duration_of_gpu](auto i) {
-                        auto duration = physical_devices_acquire_image_time[i] - physical_devices_present_time[i];
-                        physical_devices_duration_of_gpu[i] += duration;
+            while (!window::should_window_close(view_window)
+                && frame_index++ < benchmark_frame_count) {
+                auto cursor_pos = window::get_window_cursor_position(view_window);
+                scene = generateRandomScene();
+                std::ranges::transform(
+                    std::span{ scene.spheres, scene.sphereAmount },
+                    aabbs.begin(),
+                    [](auto& sphere) {
+                        auto getAABBFromSphere = [](const glm::vec4& geometry) {
+                            return vk::AabbPositionsKHR{
+                                    .minX = geometry.x - geometry.w,
+                                    .minY = geometry.y - geometry.w,
+                                    .minZ = geometry.z - geometry.w,
+                                    .maxX = geometry.x + geometry.w,
+                                    .maxY = geometry.y + geometry.w,
+                                    .maxZ = geometry.z + geometry.w
+                            };
+                            };
+                        return getAABBFromSphere(sphere.geometry);
                     }
                 );
 
-                std::ranges::for_each(
-                    physical_device_indices,
-                    [&devices, &physical_devices_fences, &physical_devices_swapchain_image_index](auto i) {
-                        auto fence = physical_devices_fences[i][physical_devices_swapchain_image_index[i]];
-                        {
-                            vk::Result res = devices[i].waitForFences(fence, true, UINT64_MAX);
+                auto [x, y] = cursor_pos;
+                x /= 500.0;
+                y /= 500.0;
+                auto camera_dir = glm::vec3{ sin(x) * cos(y), -sin(y), cos(x) * cos(y) };
+
+                {
+                    auto spheres = std::span{ scene.spheres, scene.sphereAmount };
+
+                    auto physical_devices_acquire_image_time = std::vector<std::chrono::steady_clock::time_point>(physical_devices.size());
+                    auto physical_devices_swapchain_image_index = std::vector<uint32_t>(physical_devices.size());
+                    auto physical_devices_acquire_image_semaphore = std::vector<vk::Semaphore>(physical_devices.size());
+                    std::for_each(
+                        std::execution::par_unseq,
+                        physical_device_indices.begin(), physical_device_indices.end(),
+                        [&physical_devices_swapchain_image_index,
+                        &physical_devices_acquire_image_semaphore,
+                        &devices,
+                        &physical_devices_next_image_semaphores, &physical_devices_swapchain,
+                        &physical_devices_next_image_free_semaphore_index, &physical_devices_next_image_semaphores_indices,
+                        &physical_devices_acquire_image_time](auto i) {
+                            uint32_t swapchain_image_index = 0;
+                            auto acquire_image_semaphore = physical_devices_next_image_semaphores[i][physical_devices_next_image_free_semaphore_index[i]];
+                            if (auto [result, index] = devices[i].acquireNextImageKHR(physical_devices_swapchain[i], UINT64_MAX, acquire_image_semaphore);
+                                result == vk::Result::eSuccess || result == vk::Result::eSuboptimalKHR) {
+                                swapchain_image_index = index;
+                            }
+                            else {
+                                throw std::runtime_error{ "failed to acquire next image" };
+                            }
+                            physical_devices_acquire_image_time[i] = std::chrono::steady_clock::now();
+                            std::swap(physical_devices_next_image_free_semaphore_index[i], physical_devices_next_image_semaphores_indices[i][swapchain_image_index]);
+                            physical_devices_acquire_image_semaphore[i] = acquire_image_semaphore;
+                            physical_devices_swapchain_image_index[i] = swapchain_image_index;
+                        }
+                    );
+                    std::ranges::for_each(
+                        physical_device_indices,
+                        [&physical_devices_acquire_image_time,
+                        &physical_devices_present_time,
+                        &physical_devices_duration_of_gpu](auto i) {
+                            auto duration = physical_devices_acquire_image_time[i] - physical_devices_present_time[i];
+                            physical_devices_duration_of_gpu[i] += duration;
+                        }
+                    );
+
+                    std::ranges::for_each(
+                        physical_device_indices,
+                        [&devices, &physical_devices_fences, &physical_devices_swapchain_image_index](auto i) {
+                            auto fence = physical_devices_fences[i][physical_devices_swapchain_image_index[i]];
+                            {
+                                vk::Result res = devices[i].waitForFences(fence, true, UINT64_MAX);
+                                if (res != vk::Result::eSuccess) {
+                                    throw std::runtime_error{ "failed to wait fences" };
+                                }
+                            }
+                            devices[i].resetFences(fence);
+                        }
+                    );
+
+                    std::ranges::for_each(
+                        physical_device_indices,
+                        [&devices, &physical_devices_swapchain_image_index, samples, width, height, &physical_devices_render_offset,
+                        &physical_devices_render_call_info_buffers, &camera_dir](auto i) {
+                            RenderCallInfo renderCallInfo = {
+                                .number = 0,
+                                .samplesPerRenderCall = samples,
+                                .offset = physical_devices_render_offset[i],
+                                .image_size = {width, height},
+                                .camera_pos = {13.0f, 11.0f, -3.0f, 0},
+                                .camera_dir = {-13.0f, -11.0f, 3.0f, 0},
+                            };
+                            void* data = devices[i].mapMemory(physical_devices_render_call_info_buffers[i][physical_devices_swapchain_image_index[i]].memory, 0, sizeof(RenderCallInfo));
+                            memcpy(data, &renderCallInfo, sizeof(RenderCallInfo));
+                            devices[i].unmapMemory(physical_devices_render_call_info_buffers[i][physical_devices_swapchain_image_index[i]].memory);
+                        }
+                    );
+
+                    std::ranges::for_each(
+                        physical_device_indices,
+                        [&devices, &aabbs, &physical_devices_aabb_buffers, &physical_devices_swapchain_image_index, &physical_devices_sphere_buffers, &spheres](auto i) {
+                            vulkan::update_accel_structures_data(devices[i],
+                                aabbs, physical_devices_aabb_buffers[i][physical_devices_swapchain_image_index[i]],
+                                physical_devices_sphere_buffers[i][physical_devices_swapchain_image_index[i]], spheres.size_bytes(), spheres);
+                        }
+                    );
+
+                    std::for_each(
+                        std::execution::par_unseq,
+                        physical_device_indices.begin(), physical_device_indices.end(),
+                        [&physical_devices_compute_queue, &physical_devices_command_buffers,
+                        &physical_devices_render_image_semaphores, &physical_devices_swapchain_image_index,
+                        &physical_devices_acquire_image_semaphore, &physical_devices_fences](auto i) {
+                            auto swapchain_image_index = physical_devices_swapchain_image_index[i];
+                            auto render_image_semaphore = physical_devices_render_image_semaphores[i][swapchain_image_index];
+
+                            auto wait_semaphores = std::array{ physical_devices_acquire_image_semaphore[i] };
+                            auto  wait_stage_masks =
+                                std::array<vk::PipelineStageFlags, 1>{ vk::PipelineStageFlagBits::eAllCommands };
+                            auto signal_semaphores = std::array{ render_image_semaphore };
+                            auto submitInfo = vk::SubmitInfo{}
+                                .setCommandBuffers(physical_devices_command_buffers[i][swapchain_image_index])
+                                .setWaitSemaphores(wait_semaphores)
+                                .setWaitDstStageMask(wait_stage_masks)
+                                .setSignalSemaphores(signal_semaphores);
+
+                            auto res = physical_devices_compute_queue[i].submit(1, &submitInfo, physical_devices_fences[i][swapchain_image_index]);
                             if (res != vk::Result::eSuccess) {
-                                throw std::runtime_error{ "failed to wait fences" };
+                                throw std::runtime_error{ "failed to submit" };
                             }
                         }
-                        devices[i].resetFences(fence);
-                    }
-                );
+                    );
 
-                std::ranges::for_each(
-                    physical_device_indices,
-                    [&devices, &physical_devices_swapchain_image_index, samples, width, height, &physical_devices_render_offset,
-                    &physical_devices_render_call_info_buffers, &camera_dir](auto i) {
-                        RenderCallInfo renderCallInfo = {
-                            .number = 0,
-                            .samplesPerRenderCall = samples,
-                            .offset = physical_devices_render_offset[i],
-                            .image_size = {width, height},
-                            .camera_pos = {13.0f, 11.0f, -3.0f, 0},
-                            .camera_dir = {-13.0f, -11.0f, 3.0f, 0},
-                        };
-                        void* data = devices[i].mapMemory(physical_devices_render_call_info_buffers[i][physical_devices_swapchain_image_index[i]].memory, 0, sizeof(RenderCallInfo));
-                        memcpy(data, &renderCallInfo, sizeof(RenderCallInfo));
-                        devices[i].unmapMemory(physical_devices_render_call_info_buffers[i][physical_devices_swapchain_image_index[i]].memory);
-                    }
-                );
+                    std::for_each(
+                        std::execution::par_unseq,
+                        physical_device_indices.begin(), physical_device_indices.end(),
+                        [&physical_devices_present_queue,
+                        &physical_devices_render_image_semaphores, &physical_devices_swapchain, &physical_devices_swapchain_image_index,
+                        &physical_devices_present_time](auto i) {
+                            auto present_queue = physical_devices_present_queue[i];
+                            auto swapchain_image_index = physical_devices_swapchain_image_index[i];
+                            vk::PresentInfoKHR presentInfo = {
+                                    .waitSemaphoreCount = 1,
+                                    .pWaitSemaphores = &physical_devices_render_image_semaphores[i][swapchain_image_index],
+                                    .swapchainCount = 1,
+                                    .pSwapchains = &physical_devices_swapchain[i],
+                                    .pImageIndices = &swapchain_image_index
+                            };
 
-                std::ranges::for_each(
-                    physical_device_indices,
-                    [&devices, &aabbs, &physical_devices_aabb_buffers, &physical_devices_swapchain_image_index, &physical_devices_sphere_buffers, &spheres](auto i) {
-                        vulkan::update_accel_structures_data(devices[i],
-                            aabbs, physical_devices_aabb_buffers[i][physical_devices_swapchain_image_index[i]],
-                            physical_devices_sphere_buffers[i][physical_devices_swapchain_image_index[i]], spheres.size_bytes(), spheres);
-                    }
-                );
-
-                std::for_each(
-                    std::execution::par_unseq,
-                    physical_device_indices.begin(), physical_device_indices.end(),
-                    [&physical_devices_compute_queue, &physical_devices_command_buffers,
-                    &physical_devices_render_image_semaphores, &physical_devices_swapchain_image_index,
-                    &physical_devices_acquire_image_semaphore, &physical_devices_fences](auto i) {
-                        auto swapchain_image_index = physical_devices_swapchain_image_index[i];
-                        auto render_image_semaphore = physical_devices_render_image_semaphores[i][swapchain_image_index];
-
-                        auto wait_semaphores = std::array{ physical_devices_acquire_image_semaphore[i] };
-                        auto  wait_stage_masks =
-                            std::array<vk::PipelineStageFlags, 1>{ vk::PipelineStageFlagBits::eAllCommands };
-                        auto signal_semaphores = std::array{ render_image_semaphore };
-                        auto submitInfo = vk::SubmitInfo{}
-                            .setCommandBuffers(physical_devices_command_buffers[i][swapchain_image_index])
-                            .setWaitSemaphores(wait_semaphores)
-                            .setWaitDstStageMask(wait_stage_masks)
-                            .setSignalSemaphores(signal_semaphores);
-
-                        auto res = physical_devices_compute_queue[i].submit(1, &submitInfo, physical_devices_fences[i][swapchain_image_index]);
-                        if (res != vk::Result::eSuccess) {
-                            throw std::runtime_error{ "failed to submit" };
+                            auto res = present_queue.presentKHR(presentInfo);
+                            if (res != vk::Result::eSuccess) {
+                                std::cerr << "present return: " << res << std::endl;
+                            }
+                            physical_devices_present_time[i] = std::chrono::steady_clock::now();
                         }
-                    }
-                );
+                    );
+                }
 
-                std::for_each(
-                    std::execution::par_unseq,
-                    physical_device_indices.begin(), physical_device_indices.end(),
-                    [&physical_devices_present_queue,
-                     &physical_devices_render_image_semaphores, &physical_devices_swapchain, &physical_devices_swapchain_image_index,
-                     &physical_devices_present_time](auto i) {
-                        auto present_queue = physical_devices_present_queue[i];
-                        auto swapchain_image_index = physical_devices_swapchain_image_index[i];
-                        vk::PresentInfoKHR presentInfo = {
-                                .waitSemaphoreCount = 1,
-                                .pWaitSemaphores = &physical_devices_render_image_semaphores[i][swapchain_image_index],
-                                .swapchainCount = 1,
-                                .pSwapchains = &physical_devices_swapchain[i],
-                                .pImageIndices = &swapchain_image_index
-                        };
-
-                        auto res = present_queue.presentKHR(presentInfo);
-                        if (res != vk::Result::eSuccess) {
-                            std::cerr << "present return: " << res << std::endl;
-                        }
-                        physical_devices_present_time[i] = std::chrono::steady_clock::now();
-                    }
-                );
+                window::poll_events(window_system);
             }
 
-            window::poll_events(window_system);
-        }
+            auto end_time = std::chrono::steady_clock::now();
+            auto duration = end_time - begin_time;
+            auto frame_count = frame_index;
+            auto duration_per_frame = duration / frame_count;
+            std::cout << "duration_per_frame: " << duration_per_frame << std::endl;
 
-        auto end_time = std::chrono::steady_clock::now();
-        auto duration = end_time - begin_time;
-        auto duration_per_frame = duration / frame_index;
-        std::cout << "duration: " << duration << std::endl;
+            using namespace std::literals;
+            benchmark_frame_count = (4s + 50*duration_per_frame) / duration_per_frame;
 
-        benchmark_frame_count = (4s+ duration_per_frame) / duration_per_frame;
-
-        if (previous_duration_per_frame < duration_per_frame) {
-            physical_devices_render_extent = previous_physical_devices_render_extent;
-            duration_per_frame = previous_duration_per_frame;
-        }
-        previous_physical_devices_render_extent = physical_devices_render_extent;
-        previous_duration_per_frame = duration_per_frame;
-        if (false) {
-            float total_v = 0;
-            auto physical_devices_v = std::vector<float>(physical_devices.size());
+            auto frame_info = tune::frame_info{
+                .workload_distribution = std::vector<uint32_t>(physical_devices.size()),
+                .duration = duration_per_frame,
+                .estimated_gpu_duration = std::vector<std::chrono::steady_clock::duration>(physical_devices.size())
+            };
             std::ranges::for_each(
                 physical_device_indices,
-                [&physical_devices_duration_of_gpu, &physical_devices_render_extent,
-                &total_v, &physical_devices_v](auto i) {
-                    auto v = static_cast<float>(physical_devices_render_extent[i].y) / physical_devices_duration_of_gpu[i].count();
-                    std::cout << physical_devices_duration_of_gpu[i] << ", ";
-                    total_v += v;
-                    physical_devices_v[i] = v;
+                [&frame_info, &physical_devices_render_extent, &physical_devices_duration_of_gpu, frame_count](auto i) {
+                    frame_info.workload_distribution[i] = physical_devices_render_extent[i].y;
+                    frame_info.estimated_gpu_duration[i] = physical_devices_duration_of_gpu[i] / frame_count;
                 }
             );
-            std::cout << std::endl;
+            tune::add_frame_info(tuning_info, std::move(frame_info));
 
-            uint32_t remain = height;
-            std::ranges::for_each(
-                physical_device_indices,
-                [&physical_devices_render_extent, &physical_devices_v, total_v, height, &remain](auto i) {
-                    physical_devices_render_extent[i].y = static_cast<uint32_t>(height * physical_devices_v[i] / total_v);
-                    remain -= physical_devices_render_extent[i].y;
-                }
-            );
-            assert(remain < physical_devices.size());
-            for (int i = 0; i < remain; i++) {
-                physical_devices_render_extent[i].y++;
-            }
-            remain = 0;
-        }
-        else if (true) {
-            previous_physical_devices_render_extent = physical_devices_render_extent;
-            previous_duration_per_frame = duration_per_frame;
-
-            auto extent_offset = std::vector<int32_t>(physical_devices.size());
-            auto dec_index = rand() % physical_devices.size();
-            auto inc_index = rand() % physical_devices.size();
-            if (physical_devices_render_extent[dec_index].y > 1) {
-                physical_devices_render_extent[inc_index].y += 1;
-                physical_devices_render_extent[dec_index].y -= 1;
+            auto opt_next_workload_distribution = tune::get_workload(tuning_info);
+            if (opt_next_workload_distribution) {
+                auto& next_workload_distribution = opt_next_workload_distribution.value();
+                std::ranges::transform(
+                    next_workload_distribution,
+                    physical_devices_render_extent.begin(),
+                    [width](auto w) {
+                        return glm::uvec2{ width, w };
+                    }
+                );
+                break;
             }
         }
 
